@@ -79,7 +79,20 @@ function updateConfig(section: string, value: unknown) {
 const sections: ConfigSection[] = [
   { id: 'plex', label: 'Plex', icon: '📺', group: 'Core', required: true },
   { id: 'tmdb', label: 'TMDb', icon: '🎬', group: 'Core', required: true },
-  { id: 'libraries', label: 'Libraries', icon: '📚', group: 'Core', required: true },
+  {
+    id: 'libraries',
+    label: 'Libraries',
+    icon: '📚',
+    group: 'Core',
+    required: true,
+    children: [
+      { id: 'libraries-collections', label: 'Collections', icon: '📚', group: 'Core' },
+      { id: 'libraries-overlays', label: 'Overlays', icon: '🏷️', group: 'Core' },
+      { id: 'libraries-metadata', label: 'Metadata', icon: '📝', group: 'Core' },
+      { id: 'libraries-operations', label: 'Operations', icon: '⚡', group: 'Core' },
+      { id: 'libraries-settings', label: 'Settings', icon: '⚙️', group: 'Core' },
+    ],
+  },
   { id: 'settings', label: 'Settings', icon: '⚙️', group: 'Settings' },
   { id: 'scheduling', label: 'Scheduling', icon: '🕐', group: 'Settings' },
   { id: 'operations', label: 'Operations', icon: '⚡', group: 'Settings' },
@@ -125,16 +138,33 @@ const yamlContent = computed({
   set: (value) => emit('update:modelValue', value),
 });
 
+// Get the parent section ID for child sections (e.g., libraries-collections -> libraries)
+const effectiveSectionId = computed(() => {
+  if (activeSection.value.startsWith('libraries-')) {
+    return 'libraries';
+  }
+  return activeSection.value;
+});
+
+// Get the tab name for libraries children (e.g., libraries-collections -> collections)
+const librariesInitialTab = computed(() => {
+  if (activeSection.value.startsWith('libraries-')) {
+    return activeSection.value.replace('libraries-', '');
+  }
+  return undefined;
+});
+
 // Section-filtered YAML content (shows only the active section)
 const sectionYamlContent = computed(() => {
-  const sectionData = parsedConfig.value[activeSection.value];
+  const sectionId = effectiveSectionId.value;
+  const sectionData = parsedConfig.value[sectionId];
   if (!sectionData) {
-    return `# No ${activeSection.value} configuration yet\n# Add settings using the form on the left`;
+    return `# No ${sectionId} configuration yet\n# Add settings using the form on the left`;
   }
   try {
-    return stringify({ [activeSection.value]: sectionData }, { lineWidth: 0 });
+    return stringify({ [sectionId]: sectionData }, { lineWidth: 0 });
   } catch {
-    return `# Error generating YAML for ${activeSection.value}`;
+    return `# Error generating YAML for ${sectionId}`;
   }
 });
 
@@ -196,10 +226,11 @@ const displayYamlContent = computed(() => {
           @test-connection="emit('test-connection', 'tmdb', tmdbConfig)"
         />
 
-        <!-- Libraries Section -->
+        <!-- Libraries Section (includes children: libraries-collections, libraries-overlays, etc.) -->
         <LibrariesSection
-          v-else-if="activeSection === 'libraries'"
+          v-else-if="activeSection === 'libraries' || activeSection.startsWith('libraries-')"
           :model-value="librariesConfig"
+          :initial-tab="librariesInitialTab"
           @update:model-value="updateConfig('libraries', $event)"
         />
 

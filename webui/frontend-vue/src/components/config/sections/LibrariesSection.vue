@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import FormField from '../FormField.vue';
-import { Input, Button, Card, Badge, Modal, Checkbox, Select } from '@/components/common';
+import { Input, Button, Card, Badge, Modal, Checkbox, Select, ExpandableSelect } from '@/components/common';
 
 interface CollectionFile {
   file?: string;
@@ -48,6 +48,7 @@ interface LibraryConfig {
 
 interface Props {
   modelValue: Record<string, LibraryConfig>;
+  initialTab?: string; // e.g., 'collections', 'overlays', 'metadata', 'operations', 'settings'
 }
 
 const props = defineProps<Props>();
@@ -59,6 +60,28 @@ const showAddModal = ref(false);
 const newLibraryName = ref('');
 const editingLibrary = ref<string | null>(null);
 const activeTab = ref<Record<string, string>>({});
+
+// Watch for initialTab changes and set the default tab for all libraries
+watch(
+  () => props.initialTab,
+  (newTab) => {
+    if (newTab) {
+      // Set this tab as the active tab for the first library (or all expanded libraries)
+      const libraryNames = Object.keys(props.modelValue || {});
+      if (libraryNames.length > 0) {
+        // Auto-expand the first library and set its tab
+        if (!editingLibrary.value) {
+          editingLibrary.value = libraryNames[0];
+        }
+        activeTab.value = {
+          ...activeTab.value,
+          [editingLibrary.value]: newTab,
+        };
+      }
+    }
+  },
+  { immediate: true }
+);
 
 // File input states
 const newCollectionFile = ref<Record<string, string>>({});
@@ -75,68 +98,195 @@ const libraries = computed(() => Object.entries(props.modelValue || {}));
 function getCollectionDescription(libraryName: string): string {
   const selected = selectedCollectionDefault.value[libraryName];
   if (!selected) return '';
-  const option = defaultCollectionOptions.find(o => o.value === selected);
-  return option?.description || '';
+
+  // Check standalone options first
+  const standaloneOption = standaloneCollectionOptions.find(o => o.value === selected);
+  if (standaloneOption) return standaloneOption.description || '';
+
+  // Check grouped options
+  for (const group of collectionOptionGroups) {
+    const option = group.options.find(o => o.value === selected);
+    if (option) return option.description || '';
+  }
+
+  return '';
 }
 
 // Get description for selected overlay default
 function getOverlayDescription(libraryName: string): string {
   const selected = selectedOverlayDefault.value[libraryName];
   if (!selected) return '';
-  const option = defaultOverlayOptions.find(o => o.value === selected);
-  return option?.description || '';
+
+  // Check standalone options first
+  const standaloneOption = standaloneOverlayOptions.find(o => o.value === selected);
+  if (standaloneOption) return standaloneOption.description || '';
+
+  // Check grouped options
+  for (const group of overlayOptionGroups) {
+    const option = group.options.find(o => o.value === selected);
+    if (option) return option.description || '';
+  }
+
+  return '';
 }
 
-// Default collection options from Kometa with descriptions
-const defaultCollectionOptions = [
+// Standalone collection options (not grouped)
+const standaloneCollectionOptions = [
   { value: '', label: 'Custom file path...', description: 'Use your own custom collection file' },
-  { value: 'basic', label: 'Basic (New, Top Rated, etc.)', description: 'Essential collections like New Releases, Top Rated, and Popular' },
-  { value: 'imdb', label: 'IMDb (Top 250, Popular, etc.)', description: 'Collections based on IMDb charts and lists' },
-  { value: 'trakt', label: 'Trakt (Trending, Popular, etc.)', description: 'Collections from Trakt trending and popular lists' },
-  { value: 'tmdb', label: 'TMDb (Popular, Top Rated, etc.)', description: 'Collections from The Movie Database rankings' },
-  { value: 'tautulli', label: 'Tautulli (Most Watched)', description: 'Collections based on your Plex viewing history via Tautulli' },
-  { value: 'genre', label: 'Genre Collections', description: 'Automatically create collections for each genre (Action, Comedy, etc.)' },
-  { value: 'franchise', label: 'Franchise Collections', description: 'Group movies by franchise (Star Wars, James Bond, etc.)' },
-  { value: 'universe', label: 'Universe Collections (MCU, etc.)', description: 'Cinematic universe collections like MCU, DCEU, Wizarding World' },
-  { value: 'decade', label: 'Decade Collections', description: 'Group content by decade (1980s, 1990s, 2000s, etc.)' },
-  { value: 'year', label: 'Year Collections', description: 'Create a collection for each release year' },
-  { value: 'content_rating_us', label: 'Content Rating (US)', description: 'Collections by US content rating (G, PG, PG-13, R, etc.)' },
-  { value: 'content_rating_uk', label: 'Content Rating (UK)', description: 'Collections by UK content rating (U, PG, 12A, 15, 18)' },
-  { value: 'resolution', label: 'Resolution Collections', description: 'Group content by video resolution (4K, 1080p, 720p, etc.)' },
-  { value: 'audio_language', label: 'Audio Language Collections', description: 'Collections by audio language (English, Spanish, French, etc.)' },
-  { value: 'subtitle_language', label: 'Subtitle Language Collections', description: 'Collections by available subtitle languages' },
-  { value: 'streaming', label: 'Streaming Services', description: 'Collections showing which streaming service has each title' },
-  { value: 'studio', label: 'Studio Collections', description: 'Group content by production studio (Disney, Warner Bros, etc.)' },
-  { value: 'network', label: 'Network Collections', description: 'Group TV shows by network (HBO, Netflix, BBC, etc.)' },
-  { value: 'country', label: 'Country Collections', description: 'Collections by country of origin' },
-  { value: 'region', label: 'Region Collections', description: 'Collections by geographic region (Asia, Europe, etc.)' },
-  { value: 'aspect', label: 'Aspect Ratio Collections', description: 'Group content by aspect ratio (16:9, 2.35:1, IMAX, etc.)' },
-  { value: 'based', label: 'Based On (Books, Comics, etc.)', description: 'Collections for content based on books, comics, games, etc.' },
-  { value: 'actor', label: 'Actor Collections', description: 'Automatically create collections for popular actors' },
-  { value: 'director', label: 'Director Collections', description: 'Collections grouping films by director' },
-  { value: 'producer', label: 'Producer Collections', description: 'Collections grouping content by producer' },
-  { value: 'writer', label: 'Writer Collections', description: 'Collections grouping content by writer' },
-  { value: 'seasonal', label: 'Seasonal Collections', description: 'Holiday and seasonal collections (Christmas, Halloween, Summer, etc.)' },
-  { value: 'award', label: 'Award Collections', description: 'Collections for award winners (Oscar, Emmy, Golden Globe, etc.)' },
-  { value: 'chart', label: 'Chart Collections', description: 'Various chart-based collections from multiple sources' },
-  { value: 'collectionless', label: 'Collectionless', description: 'A collection of items that are not in any other collection' },
-  { value: 'separator', label: 'Separators', description: 'Visual separators to organize your collection library' },
 ];
 
-const defaultOverlayOptions = [
+// Hierarchical collection option groups
+const collectionOptionGroups = [
+  {
+    label: 'Charts & Rankings',
+    icon: '📊',
+    description: 'Collections based on popular charts and rankings from various sources',
+    options: [
+      { value: 'basic', label: 'Basic', description: 'Essential collections like New Releases, Top Rated, and Popular' },
+      { value: 'imdb', label: 'IMDb', description: 'Collections based on IMDb charts (Top 250, Popular, Box Office)' },
+      { value: 'trakt', label: 'Trakt', description: 'Collections from Trakt trending and popular lists' },
+      { value: 'tmdb', label: 'TMDb', description: 'Collections from The Movie Database rankings' },
+      { value: 'tautulli', label: 'Tautulli', description: 'Collections based on your Plex viewing history via Tautulli' },
+      { value: 'chart', label: 'All Charts', description: 'Various chart-based collections from multiple sources combined' },
+    ],
+  },
+  {
+    label: 'Categories & Genres',
+    icon: '🎭',
+    description: 'Organize content by genre, franchise, or universe',
+    options: [
+      { value: 'genre', label: 'Genre', description: 'Automatically create collections for each genre (Action, Comedy, etc.)' },
+      { value: 'franchise', label: 'Franchise', description: 'Group movies by franchise (Star Wars, James Bond, etc.)' },
+      { value: 'universe', label: 'Universe', description: 'Cinematic universe collections (MCU, DCEU, Wizarding World, etc.)' },
+      { value: 'based', label: 'Based On', description: 'Collections for content based on books, comics, games, etc.' },
+    ],
+  },
+  {
+    label: 'Time & Release',
+    icon: '📅',
+    description: 'Collections organized by release date',
+    options: [
+      { value: 'decade', label: 'Decade', description: 'Group content by decade (1980s, 1990s, 2000s, etc.)' },
+      { value: 'year', label: 'Year', description: 'Create a collection for each release year' },
+      { value: 'seasonal', label: 'Seasonal & Holidays', description: 'Holiday and seasonal collections (Christmas, Halloween, Summer, etc.)' },
+    ],
+  },
+  {
+    label: 'People & Credits',
+    icon: '👤',
+    description: 'Collections based on actors, directors, and crew',
+    options: [
+      { value: 'actor', label: 'Actor', description: 'Automatically create collections for popular actors' },
+      { value: 'director', label: 'Director', description: 'Collections grouping films by director' },
+      { value: 'producer', label: 'Producer', description: 'Collections grouping content by producer' },
+      { value: 'writer', label: 'Writer', description: 'Collections grouping content by writer' },
+    ],
+  },
+  {
+    label: 'Production & Distribution',
+    icon: '🎬',
+    description: 'Collections by studio, network, or streaming service',
+    options: [
+      { value: 'studio', label: 'Studio', description: 'Group content by production studio (Disney, Warner Bros, etc.)' },
+      { value: 'network', label: 'Network', description: 'Group TV shows by network (HBO, Netflix, BBC, etc.)' },
+      { value: 'streaming', label: 'Streaming Services', description: 'Collections showing which streaming service has each title' },
+    ],
+  },
+  {
+    label: 'Location & Region',
+    icon: '🌍',
+    description: 'Collections by country or region of origin',
+    options: [
+      { value: 'country', label: 'Country', description: 'Collections by country of origin' },
+      { value: 'region', label: 'Region', description: 'Collections by geographic region (Asia, Europe, etc.)' },
+    ],
+  },
+  {
+    label: 'Ratings & Certifications',
+    icon: '⭐',
+    description: 'Collections based on content ratings and certifications',
+    options: [
+      { value: 'content_rating_us', label: 'Content Rating (US)', description: 'Collections by US content rating (G, PG, PG-13, R, etc.)' },
+      { value: 'content_rating_uk', label: 'Content Rating (UK)', description: 'Collections by UK content rating (U, PG, 12A, 15, 18)' },
+      { value: 'award', label: 'Awards', description: 'Collections for award winners (Oscar, Emmy, Golden Globe, etc.)' },
+    ],
+  },
+  {
+    label: 'Technical & Quality',
+    icon: '⚙️',
+    description: 'Collections based on video/audio technical specifications',
+    options: [
+      { value: 'resolution', label: 'Resolution', description: 'Group content by video resolution (4K, 1080p, 720p, etc.)' },
+      { value: 'audio_language', label: 'Audio Language', description: 'Collections by audio language (English, Spanish, French, etc.)' },
+      { value: 'subtitle_language', label: 'Subtitle Language', description: 'Collections by available subtitle languages' },
+      { value: 'aspect', label: 'Aspect Ratio', description: 'Group content by aspect ratio (16:9, 2.35:1, IMAX, etc.)' },
+    ],
+  },
+  {
+    label: 'Utility',
+    icon: '🔧',
+    description: 'Utility collections and organization tools',
+    options: [
+      { value: 'collectionless', label: 'Collectionless', description: 'A collection of items that are not in any other collection' },
+      { value: 'separator', label: 'Separators', description: 'Visual separators to organize your collection library' },
+    ],
+  },
+];
+
+// Standalone overlay options (not grouped)
+const standaloneOverlayOptions = [
   { value: '', label: 'Custom file path...', description: 'Use your own custom overlay file' },
-  { value: 'resolution', label: 'Resolution Overlay (4K, 1080p, etc.)', description: 'Shows video resolution badge on posters (4K, 1080p, 720p, etc.)' },
-  { value: 'audio_codec', label: 'Audio Codec Overlay', description: 'Displays audio format (Dolby Atmos, DTS-X, TrueHD, etc.)' },
-  { value: 'video_format', label: 'Video Format Overlay', description: 'Shows video format information (HDR, Dolby Vision, etc.)' },
-  { value: 'streaming', label: 'Streaming Service Overlay', description: 'Indicates which streaming service has the content available' },
-  { value: 'ratings', label: 'Ratings Overlay', description: 'Displays IMDb, TMDb, Rotten Tomatoes, or other ratings on posters' },
-  { value: 'status', label: 'Status Overlay (Continuing, Ended)', description: 'Shows TV show status - Continuing, Ended, Canceled, etc.' },
-  { value: 'ribbon', label: 'Ribbon Overlays', description: 'Corner ribbon badges for awards, new releases, trending, etc.' },
-  { value: 'runtimes', label: 'Runtime Overlay', description: 'Displays the runtime/duration of movies or episodes' },
-  { value: 'languages', label: 'Language Flags Overlay', description: 'Shows country/language flags for audio tracks' },
-  { value: 'mediastinger', label: 'Media Stinger Overlay', description: 'Indicates if movie has post/mid-credits scenes' },
-  { value: 'commonsense', label: 'Common Sense Age Rating', description: 'Shows Common Sense Media age recommendations for families' },
-  { value: 'direct_play', label: 'Direct Play Overlay', description: 'Indicates if content can be direct played vs transcoded' },
+];
+
+// Hierarchical overlay option groups
+const overlayOptionGroups = [
+  {
+    label: 'Video & Audio Quality',
+    icon: '🎥',
+    description: 'Overlays showing video and audio technical specifications',
+    options: [
+      { value: 'resolution', label: 'Resolution', description: 'Shows video resolution badge on posters (4K, 1080p, 720p, etc.)' },
+      { value: 'audio_codec', label: 'Audio Codec', description: 'Displays audio format (Dolby Atmos, DTS-X, TrueHD, etc.)' },
+      { value: 'video_format', label: 'Video Format', description: 'Shows video format information (HDR, Dolby Vision, etc.)' },
+      { value: 'direct_play', label: 'Direct Play', description: 'Indicates if content can be direct played vs transcoded' },
+    ],
+  },
+  {
+    label: 'Ratings & Reviews',
+    icon: '⭐',
+    description: 'Overlays displaying ratings from various sources',
+    options: [
+      { value: 'ratings', label: 'Ratings', description: 'Displays IMDb, TMDb, Rotten Tomatoes, or other ratings on posters' },
+      { value: 'commonsense', label: 'Common Sense Age', description: 'Shows Common Sense Media age recommendations for families' },
+    ],
+  },
+  {
+    label: 'Status & Availability',
+    icon: '📺',
+    description: 'Overlays showing content status and availability',
+    options: [
+      { value: 'status', label: 'Show Status', description: 'Shows TV show status - Continuing, Ended, Canceled, etc.' },
+      { value: 'streaming', label: 'Streaming Service', description: 'Indicates which streaming service has the content available' },
+      { value: 'mediastinger', label: 'Media Stinger', description: 'Indicates if movie has post/mid-credits scenes' },
+    ],
+  },
+  {
+    label: 'Language & Localization',
+    icon: '🌐',
+    description: 'Overlays for language and localization information',
+    options: [
+      { value: 'languages', label: 'Language Flags', description: 'Shows country/language flags for audio tracks' },
+    ],
+  },
+  {
+    label: 'Badges & Ribbons',
+    icon: '🏷️',
+    description: 'Visual badges and ribbon overlays',
+    options: [
+      { value: 'ribbon', label: 'Ribbons', description: 'Corner ribbon badges for awards, new releases, trending, etc.' },
+      { value: 'runtimes', label: 'Runtime', description: 'Displays the runtime/duration of movies or episodes' },
+    ],
+  },
 ];
 
 const scheduleOptions = [
@@ -416,16 +566,14 @@ function getOperations(libraryName: string): LibraryOperations {
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-sm font-medium mb-2">Default Collection</label>
-                  <Select
+                  <ExpandableSelect
                     :model-value="selectedCollectionDefault[name] || ''"
-                    :options="defaultCollectionOptions"
+                    :groups="collectionOptionGroups"
+                    :standalone-options="standaloneCollectionOptions"
                     placeholder="Select a default collection..."
+                    hint="Pre-built collection files from Kometa"
                     @update:model-value="(val: string) => selectedCollectionDefault[name] = val"
                   />
-                  <p v-if="getCollectionDescription(name)" class="text-sm text-content-secondary mt-2">
-                    {{ getCollectionDescription(name) }}
-                  </p>
-                  <p v-else class="text-xs text-content-muted mt-1">Pre-built collection files from Kometa</p>
                   <Button
                     v-if="selectedCollectionDefault[name]"
                     variant="secondary"
@@ -498,16 +646,14 @@ function getOperations(libraryName: string): LibraryOperations {
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-sm font-medium mb-2">Default Overlay</label>
-                  <Select
+                  <ExpandableSelect
                     :model-value="selectedOverlayDefault[name] || ''"
-                    :options="defaultOverlayOptions"
+                    :groups="overlayOptionGroups"
+                    :standalone-options="standaloneOverlayOptions"
                     placeholder="Select a default overlay..."
+                    hint="Pre-built overlay files from Kometa"
                     @update:model-value="(val: string) => selectedOverlayDefault[name] = val"
                   />
-                  <p v-if="getOverlayDescription(name)" class="text-sm text-content-secondary mt-2">
-                    {{ getOverlayDescription(name) }}
-                  </p>
-                  <p v-else class="text-xs text-content-muted mt-1">Pre-built overlay files from Kometa</p>
                   <Button
                     v-if="selectedOverlayDefault[name]"
                     variant="secondary"
