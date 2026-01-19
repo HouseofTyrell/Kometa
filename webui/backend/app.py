@@ -1618,6 +1618,156 @@ async def preview_collection(request: CollectionSaveRequest):
     return {"yaml": yaml_output}
 
 
+class CollectionFileSaveRequest(BaseModel):
+    """Request model for saving a collection/overlay file with raw YAML."""
+    filename: str
+    content: str  # Raw YAML content
+    file_type: str = "collection"  # collection or overlay
+
+
+@app.post("/api/collections/file/save")
+async def save_collection_file(request: CollectionFileSaveRequest):
+    """
+    Save a collection or overlay file with raw YAML content.
+
+    This is used by the Collection & Overlay Editor to save files.
+    """
+    import re
+
+    # Validate filename
+    if not request.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    # Sanitize filename - only allow alphanumeric, underscore, hyphen, period
+    safe_filename = re.sub(r'[^a-zA-Z0-9_\-.]', '_', request.filename)
+    if not safe_filename.endswith(('.yml', '.yaml')):
+        safe_filename += '.yml'
+
+    # Determine the directory based on file type
+    if request.file_type == "overlay":
+        file_dir = CONFIG_DIR / "overlays"
+    else:
+        file_dir = CONFIG_DIR
+
+    file_dir.mkdir(parents=True, exist_ok=True)
+    file_path = file_dir / safe_filename
+
+    # Validate YAML content
+    try:
+        from io import StringIO
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        yaml.load(StringIO(request.content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
+
+    # Create backup if file exists
+    if file_path.exists():
+        backup_dir = CONFIG_DIR / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = backup_dir / f"{safe_filename}.{timestamp}"
+        try:
+            backup_path.write_text(file_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass  # Non-critical if backup fails
+
+    # Save the file
+    try:
+        file_path.write_text(request.content, encoding="utf-8")
+        return {
+            "success": True,
+            "message": f"File saved: {safe_filename}",
+            "path": str(file_path)
+        }
+    except Exception as e:
+        logger.error("Failed to save collection file: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+
+@app.get("/api/collections/file/{filename}")
+async def load_collection_file(filename: str):
+    """
+    Load a collection or overlay file by filename.
+    """
+    import re
+
+    # Sanitize filename
+    safe_filename = re.sub(r'[^a-zA-Z0-9_\-.]', '_', filename)
+
+    # Try to find the file in config dir or overlays dir
+    possible_paths = [
+        CONFIG_DIR / safe_filename,
+        CONFIG_DIR / "overlays" / safe_filename,
+    ]
+
+    for file_path in possible_paths:
+        if file_path.exists():
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                return {
+                    "exists": True,
+                    "filename": safe_filename,
+                    "path": str(file_path),
+                    "content": content
+                }
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+    return {
+        "exists": False,
+        "filename": safe_filename,
+        "content": ""
+    }
+
+
+@app.get("/api/collections/files")
+async def list_collection_files():
+    """
+    List all collection and overlay files in the config directory.
+    """
+    files = []
+
+    # List collection files in config dir
+    for pattern in ["*.yml", "*.yaml"]:
+        for file_path in CONFIG_DIR.glob(pattern):
+            if file_path.name != "config.yml" and file_path.is_file():
+                try:
+                    stat = file_path.stat()
+                    files.append({
+                        "name": file_path.name,
+                        "path": str(file_path),
+                        "type": "overlay" if "overlay" in file_path.name.lower() else "collection",
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                    })
+                except Exception:
+                    pass
+
+    # List files in overlays subdirectory
+    overlay_dir = CONFIG_DIR / "overlays"
+    if overlay_dir.exists():
+        for pattern in ["*.yml", "*.yaml"]:
+            for file_path in overlay_dir.glob(pattern):
+                if file_path.is_file():
+                    try:
+                        stat = file_path.stat()
+                        files.append({
+                            "name": file_path.name,
+                            "path": str(file_path),
+                            "type": "overlay",
+                            "size": stat.st_size,
+                            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                        })
+                    except Exception:
+                        pass
+
+    # Sort by modification time, newest first
+    files.sort(key=lambda f: f.get("modified", ""), reverse=True)
+
+    return {"files": files}
+
+
 @app.get("/api/builders/sources")
 async def get_builder_sources():
     """

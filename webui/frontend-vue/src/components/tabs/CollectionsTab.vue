@@ -6,8 +6,13 @@ import { YamlHighlight } from '@/components/common';
 import FormField from '@/components/config/FormField.vue';
 import CollectionTemplates from '@/components/CollectionTemplates.vue';
 import { useToast } from '@/composables';
+import { useSaveCollectionFile, useCollectionFiles, useCollectionFile } from '@/api';
 
 const toast = useToast();
+
+// API hooks
+const saveFileMutation = useSaveCollectionFile();
+const { data: existingFiles, refetch: refetchFiles } = useCollectionFiles();
 
 // Unsaved changes warning
 const hasUnsavedChanges = computed(() => files.value.some(f => f.isDirty));
@@ -35,7 +40,9 @@ const showNewFileModal = ref(false);
 const showAddCollectionModal = ref(false);
 const showAddOverlayModal = ref(false);
 const showTemplatesPanel = ref(false);
+const showLoadFilesModal = ref(false);
 const viewMode = ref<'gui' | 'yaml' | 'split'>('split');
+const loadingFile = ref<string | null>(null);
 
 // New file form
 const newFileName = ref('');
@@ -645,6 +652,67 @@ function downloadFile() {
   toast.success(`Downloaded ${activeFile.value.name}`);
 }
 
+async function saveFile() {
+  if (!activeFile.value) return;
+
+  try {
+    await saveFileMutation.mutateAsync({
+      filename: activeFile.value.name,
+      content: yamlContent.value,
+      file_type: activeFile.value.type,
+    });
+
+    activeFile.value.isDirty = false;
+    await refetchFiles();
+    toast.success(`Saved ${activeFile.value.name} to server`);
+  } catch (err) {
+    toast.error(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+async function loadFileFromServer(filename: string, fileType: 'collection' | 'overlay') {
+  // Check if already open
+  const existingIndex = files.value.findIndex(f => f.name === filename);
+  if (existingIndex >= 0) {
+    activeFileIndex.value = existingIndex;
+    showLoadFilesModal.value = false;
+    return;
+  }
+
+  loadingFile.value = filename;
+
+  try {
+    const response = await fetch(`/api/collections/file/${encodeURIComponent(filename)}`);
+    if (!response.ok) {
+      throw new Error(`Failed to load file: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    if (!data.exists) {
+      throw new Error('File not found');
+    }
+
+    // Parse the YAML content
+    const content = parse(data.content) || {};
+
+    const newFile: CollectionFileData = {
+      name: filename,
+      type: fileType,
+      content,
+      isDirty: false,
+    };
+
+    files.value.push(newFile);
+    activeFileIndex.value = files.value.length - 1;
+    showLoadFilesModal.value = false;
+    toast.success(`Loaded ${filename}`);
+  } catch (err) {
+    toast.error(`Failed to load: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  } finally {
+    loadingFile.value = null;
+  }
+}
+
 function closeFile(index: number) {
   files.value.splice(index, 1);
   if (activeFileIndex.value === index) {
@@ -686,6 +754,12 @@ function handleYamlEdit(content: string) {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
             Templates
+          </Button>
+          <Button variant="secondary" @click="showLoadFilesModal = true; refetchFiles()">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Load from Server
           </Button>
           <Button variant="secondary" @click="showNewFileModal = true">
             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -791,7 +865,23 @@ function handleYamlEdit(content: string) {
               + Overlay
             </Button>
 
-            <Button variant="primary" size="sm" @click="downloadFile">
+            <Button
+              variant="primary"
+              size="sm"
+              :disabled="saveFileMutation.isPending.value || !activeFile?.isDirty"
+              @click="saveFile"
+            >
+              <svg v-if="saveFileMutation.isPending.value" class="w-4 h-4 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <svg v-else class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              {{ saveFileMutation.isPending.value ? 'Saving...' : 'Save' }}
+            </Button>
+
+            <Button variant="secondary" size="sm" @click="downloadFile">
               <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
@@ -2071,6 +2161,69 @@ function handleYamlEdit(content: string) {
           <Button variant="secondary" @click="showNewFileModal = false">Cancel</Button>
           <Button :disabled="!newFileName.trim()" @click="createNewFile">Create</Button>
         </div>
+      </template>
+    </Modal>
+
+    <!-- Load Files from Server Modal -->
+    <Modal
+      v-model:open="showLoadFilesModal"
+      title="Load from Server"
+      size="md"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-content-secondary">
+          Select a collection or overlay file from your Kometa configuration to edit.
+        </p>
+
+        <div v-if="!existingFiles || existingFiles.length === 0" class="py-8 text-center text-content-muted">
+          <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p>No collection or overlay files found on the server.</p>
+          <p class="text-sm mt-2">Create a new file to get started.</p>
+        </div>
+
+        <div v-else class="max-h-96 overflow-auto divide-y divide-border border border-border rounded-lg">
+          <button
+            v-for="serverFile in existingFiles"
+            :key="serverFile.name"
+            class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-tertiary transition-colors"
+            :class="{ 'opacity-50': files.some(f => f.name === serverFile.name) }"
+            :disabled="loadingFile === serverFile.name"
+            @click="loadFileFromServer(serverFile.name, serverFile.type)"
+          >
+            <div class="flex-shrink-0">
+              <Badge :variant="serverFile.type === 'collection' ? 'default' : 'success'">
+                {{ serverFile.type === 'collection' ? 'Collection' : 'Overlay' }}
+              </Badge>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="font-medium truncate">{{ serverFile.name }}</p>
+              <p class="text-xs text-content-muted">
+                {{ (serverFile.size / 1024).toFixed(1) }} KB
+                · Modified {{ new Date(serverFile.modified).toLocaleDateString() }}
+              </p>
+            </div>
+            <div v-if="loadingFile === serverFile.name" class="flex-shrink-0">
+              <svg class="w-5 h-5 animate-spin text-kometa-gold" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <div v-else-if="files.some(f => f.name === serverFile.name)" class="flex-shrink-0 text-xs text-content-muted">
+              Already open
+            </div>
+            <div v-else class="flex-shrink-0">
+              <svg class="w-5 h-5 text-content-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button variant="secondary" @click="showLoadFilesModal = false">Close</Button>
       </template>
     </Modal>
 

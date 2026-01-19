@@ -42,3 +42,11 @@ export {
   useUpdateSettings,
   type TestConnectionParams,
 } from './media';
+
+// Export collections API
+export {
+  collectionKeys,
+  useCollectionFiles,
+  useCollectionFile,
+  useSaveCollectionFile,
+} from './collections';
