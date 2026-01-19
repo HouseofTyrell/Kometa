@@ -144,3 +144,4 @@ dmypy.json
 .pyre/
 webui/config/config.yml
 webui/config/backups
+webui/config/webui.db
