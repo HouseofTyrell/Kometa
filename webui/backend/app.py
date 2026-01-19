@@ -297,7 +297,47 @@ async def list_backups():
     """List available config backups."""
     try:
         backups = config_manager.list_backups()
-        return {"backups": backups}
+        # Normalize field names for frontend compatibility
+        normalized = [
+            {
+                "filename": b.get("name", b.get("filename", "")),
+                "created": b.get("created", ""),
+                "size": b.get("size", 0),
+            }
+            for b in backups
+        ]
+        return {"backups": normalized}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/backup")
+async def create_backup():
+    """Create a manual backup of the current config."""
+    try:
+        config_path = CONFIG_DIR / "config.yml"
+        if not config_path.exists():
+            raise HTTPException(status_code=404, detail="No config.yml to backup")
+
+        # Use the config manager's backup method
+        backup_path = config_manager._create_backup()
+        if backup_path is None:
+            # Content is identical to most recent backup
+            backups = config_manager.list_backups()
+            if backups:
+                return {
+                    "success": True,
+                    "filename": backups[0].get("name", ""),
+                    "message": "Config unchanged from most recent backup"
+                }
+            raise HTTPException(status_code=500, detail="Failed to create backup")
+
+        return {
+            "success": True,
+            "filename": backup_path.name
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

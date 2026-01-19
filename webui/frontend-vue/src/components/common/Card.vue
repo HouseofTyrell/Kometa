@@ -61,7 +61,7 @@ const paddingClasses = {
       </div>
     </div>
 
-    <div :class="['card-body', paddingClasses[padding]]">
+    <div :class="['card-body flex-1 min-h-0 flex flex-col', paddingClasses[padding]]">
       <slot />
     </div>
 

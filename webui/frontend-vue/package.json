@@ -24,7 +24,8 @@
     "@tanstack/vue-query": "^5.17.0",
     "pinia": "^2.1.7",
     "axios": "^1.6.0",
-    "@vueuse/core": "^10.7.0"
+    "@vueuse/core": "^10.7.0",
+    "yaml": "^2.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

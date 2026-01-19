@@ -13,8 +13,12 @@ export const configKeys = {
 
 // Types
 interface ConfigResponse {
+  exists: boolean;
   content: string;
-  last_modified: string;
+  path: string;
+  message?: string;
+  parsed?: unknown;
+  validation?: unknown;
 }
 
 interface BackupInfo {
