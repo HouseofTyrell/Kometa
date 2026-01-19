@@ -44,8 +44,8 @@ APPLY_ENABLED = os.environ.get("KOMETA_UI_APPLY_ENABLED", "false").lower() == "t
 # Optional simple password protection
 UI_PASSWORD = os.environ.get("KOMETA_UI_PASSWORD", "")
 
-# UI Mode: 'vue' for Vue 3 SPA (default), 'legacy' for Jinja2 templates (deprecated)
-UI_MODE = os.environ.get("KOMETA_UI_MODE", "vue").lower()
+# Note: Legacy Jinja2 UI has been removed. Vue 3 SPA is the only supported mode.
+UI_MODE = "vue"
 
 
 # Initialize managers
@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
     print(f"Kometa Web UI starting on http://{UI_HOST}:{UI_PORT}")
     print(f"Config directory: {CONFIG_DIR}")
     print(f"Apply mode: {'ENABLED (use with caution!)' if APPLY_ENABLED else 'DISABLED (safe mode)'}")
-    print(f"UI Mode: {UI_MODE.upper()}" + (" (Vue build available)" if vue_available else " (Vue build not found, using legacy)" if UI_MODE == "vue" else ""))
+    print(f"Vue frontend: {'Available' if vue_available else 'Not built - run npm run build in frontend-vue'}")
 
     yield
 
@@ -107,28 +107,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Static files and templates
-legacy_dir = Path(__file__).parent.parent / "legacy"
+# Static files
 vue_frontend_dir = Path(__file__).parent.parent / "frontend-vue" / "dist"
 
 # Check if Vue build exists
 vue_available = vue_frontend_dir.exists() and (vue_frontend_dir / "index.html").exists()
 
-# Check if legacy files exist (for backward compatibility)
-legacy_available = legacy_dir.exists() and (legacy_dir / "templates" / "index.html").exists()
-
-# Initialize templates variable for legacy mode
-templates = None
-
-if UI_MODE == "vue" and vue_available:
-    # Serve Vue 3 SPA
-    if (vue_frontend_dir / "assets").exists():
-        app.mount("/assets", StaticFiles(directory=vue_frontend_dir / "assets"), name="assets")
-elif UI_MODE == "legacy" and legacy_available:
-    # Serve legacy static files (deprecated)
-    from fastapi.templating import Jinja2Templates
-    app.mount("/static", StaticFiles(directory=legacy_dir / "static"), name="static")
-    templates = Jinja2Templates(directory=legacy_dir / "templates")
+# Serve Vue 3 SPA assets if available
+if vue_available and (vue_frontend_dir / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=vue_frontend_dir / "assets"), name="assets")
 
 # Mount overlay images from defaults directory
 overlay_images_dir = KOMETA_ROOT / "defaults" / "overlays" / "images"
@@ -162,16 +149,9 @@ class ApplyConfirmation(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Main UI page."""
-    if UI_MODE == "vue" and vue_available:
-        # Serve Vue SPA
+    """Main UI page - serves the Vue 3 SPA."""
+    if vue_available:
         return FileResponse(vue_frontend_dir / "index.html")
-    elif UI_MODE == "legacy" and templates is not None:
-        # Serve legacy Jinja2 template (deprecated)
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "apply_enabled": APPLY_ENABLED
-        })
     else:
         # No frontend available
         return HTMLResponse(
