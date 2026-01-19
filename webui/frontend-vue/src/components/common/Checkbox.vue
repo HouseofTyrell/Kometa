@@ -45,8 +45,21 @@ const checkboxId = computed(
       >
     </div>
 
+    <!-- Support for slot-based content -->
+    <label
+      v-if="$slots.default"
+      :for="checkboxId"
+      :class="[
+        'text-sm',
+        disabled ? 'text-content-disabled cursor-not-allowed' : 'text-content cursor-pointer',
+      ]"
+    >
+      <slot />
+    </label>
+
+    <!-- Support for prop-based label/description -->
     <div
-      v-if="label || description"
+      v-else-if="label || description"
       class="flex flex-col"
     >
       <label

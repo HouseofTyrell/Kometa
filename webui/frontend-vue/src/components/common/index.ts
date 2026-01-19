@@ -13,3 +13,4 @@ export { default as Select } from './Select.vue';
 export { default as Checkbox } from './Checkbox.vue';
 export { default as ConfirmDialog } from './ConfirmDialog.vue';
 export { default as ErrorBoundary } from './ErrorBoundary.vue';
+export { default as YamlHighlight } from './YamlHighlight.vue';

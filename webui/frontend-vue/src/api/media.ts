@@ -90,12 +90,62 @@ export function useGenerateOverlayPreview() {
 // Connection Testing
 
 /**
+ * Test connection request parameters for each service
+ */
+export interface TestConnectionParams {
+  service: 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt' | 'notifiarr';
+  config: Record<string, unknown>;
+}
+
+/**
  * Test a service connection
  */
 export function useTestConnection() {
   return useMutation({
-    mutationFn: (service: 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt') =>
-      api.post<ConnectionTest>(`/test/${service}`),
+    mutationFn: ({ service, config }: TestConnectionParams) => {
+      // Map config to the expected request format for each service
+      let body: Record<string, unknown> = {};
+
+      switch (service) {
+        case 'plex':
+          body = {
+            url: config.url,
+            token: config.token,
+          };
+          break;
+        case 'tmdb':
+          body = {
+            apikey: config.apikey,
+          };
+          break;
+        case 'radarr':
+        case 'sonarr':
+          body = {
+            url: config.url,
+            token: config.token,
+          };
+          break;
+        case 'tautulli':
+          body = {
+            url: config.url,
+            apikey: config.apikey,
+          };
+          break;
+        case 'trakt':
+          body = {
+            client_id: config.client_id,
+            client_secret: config.client_secret,
+          };
+          break;
+        case 'notifiarr':
+          body = {
+            apikey: config.apikey,
+          };
+          break;
+      }
+
+      return api.post<ConnectionTest>(`/test/${service}`, body);
+    },
   });
 }
 

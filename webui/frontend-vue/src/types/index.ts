@@ -363,6 +363,7 @@ export type Theme = 'light' | 'dark' | 'system';
 export type TabId =
   | 'dashboard'
   | 'config'
+  | 'collections'
   | 'run'
   | 'logs'
   | 'history'

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useConfigStore } from '@/stores';
-import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups, useRestoreBackup } from '@/api';
+import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups, useRestoreBackup, useTestConnection } from '@/api';
 import { useToast, useConfirm } from '@/composables';
 import { Card, Button, Badge, Spinner, Modal } from '@/components/common';
+import { ConfigEditor } from '@/components/config';
 
 const config = useConfigStore();
 const toast = useToast();
@@ -17,6 +18,7 @@ const saveConfigMutation = useSaveConfig();
 const validateMutation = useValidateConfig();
 const createBackupMutation = useCreateBackup();
 const restoreBackupMutation = useRestoreBackup();
+const testConnectionMutation = useTestConnection();
 
 // Backups
 const { data: backups, refetch: refetchBackups } = useConfigBackups();
@@ -27,24 +29,133 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 
 // Editor state
 const editorContent = ref('');
-const hasLocalChanges = computed(() => editorContent.value !== configData.value?.content);
+const originalContent = ref('');
+const hasLocalChanges = computed(() => editorContent.value !== originalContent.value);
+
+// Undo/Redo history
+const undoStack = ref<string[]>([]);
+const redoStack = ref<string[]>([]);
+const isUndoRedo = ref(false);
+const MAX_HISTORY = 50;
+
+const canUndo = computed(() => undoStack.value.length > 0);
+const canRedo = computed(() => redoStack.value.length > 0);
+
+function pushToHistory(content: string) {
+  if (isUndoRedo.value) return;
+
+  // Don't push if it's the same as the last item
+  if (undoStack.value.length > 0 && undoStack.value[undoStack.value.length - 1] === content) {
+    return;
+  }
+
+  undoStack.value.push(content);
+
+  // Limit history size
+  if (undoStack.value.length > MAX_HISTORY) {
+    undoStack.value.shift();
+  }
+
+  // Clear redo stack when new changes are made
+  redoStack.value = [];
+}
+
+function handleUndo() {
+  if (!canUndo.value) return;
+
+  isUndoRedo.value = true;
+
+  // Push current state to redo stack
+  redoStack.value.push(editorContent.value);
+
+  // Pop from undo stack and apply
+  const previousState = undoStack.value.pop()!;
+  editorContent.value = previousState;
+
+  isUndoRedo.value = false;
+}
+
+function handleRedo() {
+  if (!canRedo.value) return;
+
+  isUndoRedo.value = true;
+
+  // Push current state to undo stack
+  undoStack.value.push(editorContent.value);
+
+  // Pop from redo stack and apply
+  const nextState = redoStack.value.pop()!;
+  editorContent.value = nextState;
+
+  isUndoRedo.value = false;
+}
+
+// Keyboard shortcuts for undo/redo
+function handleKeyDown(e: KeyboardEvent) {
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+  if (modKey && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault();
+    handleUndo();
+  } else if (modKey && e.key === 'z' && e.shiftKey) {
+    e.preventDefault();
+    handleRedo();
+  } else if (modKey && e.key === 'y') {
+    e.preventDefault();
+    handleRedo();
+  } else if (modKey && e.key === 's') {
+    e.preventDefault();
+    if (hasLocalChanges.value && config.isValid) {
+      handleSave();
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeyDown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown);
+});
 
 // Watch for config data changes
 watch(
   () => configData.value?.content,
   (newContent) => {
-    if (newContent && !hasLocalChanges.value) {
-      editorContent.value = newContent;
-      config.setRawConfig(newContent, false);
+    if (newContent !== undefined) {
+      // Only update if we haven't made local changes yet
+      // or if this is a fresh load (originalContent matches editorContent)
+      if (editorContent.value === originalContent.value) {
+        editorContent.value = newContent;
+        originalContent.value = newContent;
+        config.setRawConfig(newContent, false);
+      }
     }
   },
   { immediate: true }
 );
 
-// Validate on change (debounced)
+// Validate on change (debounced) and track history
 let validateTimeout: ReturnType<typeof setTimeout>;
-watch(editorContent, (content) => {
+let historyTimeout: ReturnType<typeof setTimeout>;
+let lastHistoryContent = '';
+
+watch(editorContent, (content, oldContent) => {
   config.setRawConfig(content);
+
+  // Push to history after a delay (batch rapid changes)
+  if (!isUndoRedo.value && oldContent && oldContent !== content) {
+    clearTimeout(historyTimeout);
+    historyTimeout = setTimeout(() => {
+      if (lastHistoryContent !== oldContent) {
+        pushToHistory(oldContent);
+        lastHistoryContent = oldContent;
+      }
+    }, 500);
+  }
+
   clearTimeout(validateTimeout);
   validateTimeout = setTimeout(async () => {
     try {
@@ -65,6 +176,7 @@ const handleSave = async () => {
 
   try {
     await saveConfigMutation.mutateAsync(editorContent.value);
+    originalContent.value = editorContent.value; // Reset change tracking
     config.markSaved();
     toast.success('Configuration saved successfully');
   } catch (err) {
@@ -93,7 +205,7 @@ const handleDiscard = async () => {
   );
 
   if (confirmed) {
-    editorContent.value = configData.value?.content || '';
+    editorContent.value = originalContent.value;
     config.setRawConfig(editorContent.value, false);
     toast.info('Changes discarded');
   }
@@ -188,19 +300,42 @@ const handleRestore = async (filename: string) => {
 
   try {
     await restoreBackupMutation.mutateAsync(filename);
-    await refetch();
+    const result = await refetch();
+    // Update both editor and original content with restored content
+    if (result.data?.content) {
+      editorContent.value = result.data.content;
+      originalContent.value = result.data.content;
+      config.setRawConfig(result.data.content, false);
+    }
     showBackupsModal.value = false;
     toast.success('Backup restored successfully');
   } catch (err) {
     toast.error('Failed to restore backup');
   }
 };
+
+// Test connection
+const handleTestConnection = async (service: string, config: Record<string, unknown>) => {
+  try {
+    const result = await testConnectionMutation.mutateAsync({
+      service: service as 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt' | 'notifiarr',
+      config,
+    });
+    if (result.success) {
+      toast.success(`${service} connection successful`);
+    } else {
+      toast.error(`${service} connection failed: ${result.error || result.message}`);
+    }
+  } catch (err) {
+    toast.error(`Failed to test ${service} connection`);
+  }
+};
 </script>
 
 <template>
-  <div class="h-full flex flex-col gap-4">
+  <div class="h-full flex flex-col">
     <!-- Header -->
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between p-4 border-b border-border">
       <div>
         <h2 class="text-xl font-semibold text-content-primary">
           Configuration
@@ -239,6 +374,32 @@ const handleRestore = async (filename: string) => {
         >
           Unsaved
         </Badge>
+
+        <!-- Undo/Redo -->
+        <div class="flex items-center border-r border-border pr-2 mr-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            :disabled="!canUndo"
+            title="Undo (Ctrl+Z)"
+            @click="handleUndo"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            :disabled="!canRedo"
+            title="Redo (Ctrl+Shift+Z)"
+            @click="handleRedo"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
+            </svg>
+          </Button>
+        </div>
 
         <!-- Actions -->
         <Button
@@ -317,7 +478,7 @@ const handleRestore = async (filename: string) => {
     <!-- Error state -->
     <Card
       v-else-if="error"
-      class="flex-1"
+      class="m-4"
     >
       <div class="text-center py-8">
         <div class="text-error mb-2">
@@ -333,128 +494,13 @@ const handleRestore = async (filename: string) => {
       </div>
     </Card>
 
-    <!-- Editor -->
-    <div
+    <!-- Config Editor with GUI/YAML split view -->
+    <ConfigEditor
       v-else
-      class="flex-1 flex gap-4 min-h-0"
-    >
-      <!-- Editor panel -->
-      <Card
-        class="flex-1 flex flex-col min-h-0"
-        padding="none"
-      >
-        <template #header>
-          <div class="flex items-center justify-between w-full">
-            <span class="font-medium">config.yml</span>
-            <span class="text-sm text-content-muted">
-              Line {{ config.editorCursorPosition.line }}, Col {{ config.editorCursorPosition.column }}
-            </span>
-          </div>
-        </template>
-
-        <div class="flex-1 min-h-0 overflow-hidden">
-          <textarea
-            v-model="editorContent"
-            class="w-full h-full p-4 bg-surface-primary text-content font-mono text-sm
-                   border-0 resize-none focus:ring-0 focus:outline-none"
-            spellcheck="false"
-            wrap="off"
-            @keydown.tab.prevent="editorContent += '  '"
-          />
-        </div>
-      </Card>
-
-      <!-- Validation panel -->
-      <Card
-        class="w-80 flex flex-col min-h-0"
-        padding="none"
-      >
-        <template #header>
-          <span class="font-medium">Validation</span>
-        </template>
-
-        <div class="flex-1 overflow-auto p-2">
-          <!-- Errors -->
-          <div
-            v-if="config.validation.errors.length > 0"
-            class="mb-4"
-          >
-            <h4 class="text-sm font-medium text-error mb-2 px-2">
-              Errors
-            </h4>
-            <ul class="space-y-1">
-              <li
-                v-for="(err, index) in config.validation.errors"
-                :key="index"
-                class="p-2 rounded bg-error-bg text-sm"
-              >
-                <div class="font-medium text-error">
-                  {{ err.path }}
-                </div>
-                <div class="text-content-secondary">
-                  {{ err.message }}
-                </div>
-                <div
-                  v-if="err.line"
-                  class="text-xs text-content-muted mt-1"
-                >
-                  Line {{ err.line }}
-                </div>
-              </li>
-            </ul>
-          </div>
-
-          <!-- Warnings -->
-          <div
-            v-if="config.validation.warnings.length > 0"
-            class="mb-4"
-          >
-            <h4 class="text-sm font-medium text-warning mb-2 px-2">
-              Warnings
-            </h4>
-            <ul class="space-y-1">
-              <li
-                v-for="(warn, index) in config.validation.warnings"
-                :key="index"
-                class="p-2 rounded bg-warning-bg text-sm"
-              >
-                <div class="font-medium text-warning">
-                  {{ warn.path }}
-                </div>
-                <div class="text-content-secondary">
-                  {{ warn.message }}
-                </div>
-              </li>
-            </ul>
-          </div>
-
-          <!-- Valid state -->
-          <div
-            v-if="config.isValid && config.validation.warnings.length === 0"
-            class="p-4 text-center"
-          >
-            <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-success-bg flex items-center justify-center">
-              <svg
-                class="w-6 h-6 text-success"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <p class="text-sm text-content-secondary">
-              Configuration is valid
-            </p>
-          </div>
-        </div>
-      </Card>
-    </div>
+      v-model="editorContent"
+      class="flex-1 min-h-0"
+      @test-connection="handleTestConnection"
+    />
 
     <!-- Backups Modal -->
     <Modal
