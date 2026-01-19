@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js (frontend-vue)
+frontend-vue/node_modules/
+frontend-vue/dist/
+frontend-vue/coverage/
+frontend-vue/.vite/
+
+# Test files (not needed in production)
+frontend-vue/tests/
+**/*.spec.ts
+**/*.test.ts
+
+# Build artifacts
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files (avoid recursive copy)
+Dockerfile*
+docker-compose*.yml
+.dockerignore

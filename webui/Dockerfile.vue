@@ -14,7 +14,7 @@ WORKDIR /app/frontend
 
 # Install dependencies first (better caching)
 COPY frontend-vue/package*.json ./
-RUN npm ci --prefer-offline
+RUN npm install
 
 # Copy source and build
 COPY frontend-vue/ ./
