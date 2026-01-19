@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { useRunHistory, useDeleteRun, useRunLogs } from '@/api';
 import { useToast, useConfirm } from '@/composables';
 import { Card, Button, Badge, Spinner, Modal, Select } from '@/components/common';
+import DryRunDiff from '@/components/DryRunDiff.vue';
 import type { Run, RunStatus, RunFilters } from '@/types';
 
 const toast = useToast();
@@ -22,6 +23,7 @@ const deleteMutation = useDeleteRun();
 // Selected run for details
 const selectedRun = ref<Run | null>(null);
 const showDetailsModal = ref(false);
+const detailsTab = ref<'diff' | 'logs'>('diff');
 
 // Fetch logs for selected run
 const { data: runLogs, isLoading: logsLoading } = useRunLogs(
@@ -80,6 +82,7 @@ const formatDuration = (seconds?: number) => {
 // View run details
 const viewDetails = (run: Run) => {
   selectedRun.value = run;
+  detailsTab.value = run.dry_run ? 'diff' : 'logs';
   showDetailsModal.value = true;
 };
 
@@ -242,41 +245,25 @@ const handleDelete = async (run: Run) => {
     <Modal
       v-model:open="showDetailsModal"
       :title="`Run Details - ${selectedRun ? formatDate(selectedRun.start_time) : ''}`"
-      size="lg"
+      size="xl"
     >
       <template v-if="selectedRun">
         <div class="space-y-4">
           <!-- Status and type -->
-          <div class="flex gap-2">
-            <Badge :variant="getStatusVariant(selectedRun.status)">
-              {{ selectedRun.status }}
-            </Badge>
-            <Badge :variant="selectedRun.dry_run ? 'info' : 'warning'">
-              {{ selectedRun.dry_run ? 'Dry Run' : 'Apply' }}
-            </Badge>
-          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex gap-2">
+              <Badge :variant="getStatusVariant(selectedRun.status)">
+                {{ selectedRun.status }}
+              </Badge>
+              <Badge :variant="selectedRun.dry_run ? 'info' : 'warning'">
+                {{ selectedRun.dry_run ? 'Dry Run' : 'Apply' }}
+              </Badge>
+            </div>
 
-          <!-- Details grid -->
-          <div class="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span class="text-content-muted">Started</span>
-              <div>{{ formatDate(selectedRun.start_time) }}</div>
-            </div>
-            <div>
-              <span class="text-content-muted">Ended</span>
-              <div>{{ selectedRun.end_time ? formatDate(selectedRun.end_time) : '-' }}</div>
-            </div>
-            <div>
-              <span class="text-content-muted">Duration</span>
-              <div>{{ formatDuration(selectedRun.duration_seconds) }}</div>
-            </div>
-            <div>
-              <span class="text-content-muted">Exit Code</span>
-              <div>{{ selectedRun.exit_code ?? '-' }}</div>
-            </div>
-            <div class="col-span-2">
-              <span class="text-content-muted">Libraries</span>
-              <div>{{ selectedRun.libraries?.join(', ') || 'All' }}</div>
+            <!-- Details Summary -->
+            <div class="text-sm text-content-secondary">
+              {{ formatDuration(selectedRun.duration_seconds) }} |
+              {{ selectedRun.libraries?.join(', ') || 'All Libraries' }}
             </div>
           </div>
 
@@ -288,11 +275,40 @@ const handleDelete = async (run: Run) => {
             {{ selectedRun.error_message }}
           </div>
 
-          <!-- Logs -->
-          <div>
-            <h4 class="font-medium mb-2">
-              Logs
-            </h4>
+          <!-- Tabs -->
+          <div class="border-b border-border">
+            <div class="flex gap-1">
+              <button
+                v-if="selectedRun.dry_run"
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+                :class="detailsTab === 'diff'
+                  ? 'border-kometa-gold text-kometa-gold'
+                  : 'border-transparent text-content-secondary hover:text-content'"
+                @click="detailsTab = 'diff'"
+              >
+                <span class="mr-2">📊</span>
+                Change Preview
+              </button>
+              <button
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+                :class="detailsTab === 'logs'
+                  ? 'border-kometa-gold text-kometa-gold'
+                  : 'border-transparent text-content-secondary hover:text-content'"
+                @click="detailsTab = 'logs'"
+              >
+                <span class="mr-2">📜</span>
+                Full Logs
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab Content: Dry Run Diff -->
+          <div v-if="detailsTab === 'diff' && selectedRun.dry_run" class="max-h-[60vh] overflow-auto">
+            <DryRunDiff :run-id="selectedRun.id" />
+          </div>
+
+          <!-- Tab Content: Logs -->
+          <div v-if="detailsTab === 'logs'">
             <div
               v-if="logsLoading"
               class="text-center py-4"
@@ -301,11 +317,11 @@ const handleDelete = async (run: Run) => {
             </div>
             <pre
               v-else-if="runLogs?.logs"
-              class="p-3 rounded-lg bg-surface-tertiary text-sm font-mono max-h-64 overflow-auto"
-            >{{ runLogs.logs }}</pre>
+              class="p-3 rounded-lg bg-surface-tertiary text-sm font-mono max-h-[60vh] overflow-auto whitespace-pre-wrap"
+            >{{ Array.isArray(runLogs.logs) ? runLogs.logs.join('\n') : runLogs.logs }}</pre>
             <p
               v-else
-              class="text-content-muted text-sm"
+              class="text-content-muted text-sm text-center py-8"
             >
               No logs available
             </p>

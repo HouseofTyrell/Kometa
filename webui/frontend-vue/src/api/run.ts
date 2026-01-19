@@ -93,6 +93,45 @@ export function useRunLogs(id: string) {
   });
 }
 
+/**
+ * Dry run diff response
+ */
+export interface DryRunDiffResponse {
+  run_id: string;
+  is_dry_run: boolean;
+  message?: string;
+  summary: {
+    total_operations: number;
+    operations_by_type: Record<string, number>;
+    collections_affected: number;
+    total_added: number;
+    total_removed: number;
+    total_updated: number;
+  } | null;
+  collections: Array<{
+    name: string;
+    items_added: number;
+    items_removed: number;
+    items_updated: number;
+  }>;
+  operations: Array<{
+    operation: string;
+    target: string;
+    details: string;
+  }>;
+}
+
+/**
+ * Fetch dry run diff/preview for a completed run
+ */
+export function useRunDiff(id: string) {
+  return useQuery({
+    queryKey: [...runKeys.detail(id), 'diff'],
+    queryFn: () => api.get<DryRunDiffResponse>(`/runs/${id}/diff`),
+    enabled: !!id,
+  });
+}
+
 // Mutations
 
 /**

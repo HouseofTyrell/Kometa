@@ -482,6 +482,155 @@ async def get_run_logs(run_id: str, tail: int = 1000):
         raise HTTPException(status_code=404, detail="Logs not found")
 
 
+@app.get("/api/runs/{run_id}/diff")
+async def get_run_diff(run_id: str):
+    """
+    Parse dry run logs and return structured diff data.
+
+    Returns a summary of what changes would have been made during a dry run,
+    organized by operation type and collection.
+    """
+    import re
+    from collections import defaultdict
+
+    # Get run info first
+    run = await run_manager.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if not run.get("dry_run"):
+        return {
+            "run_id": run_id,
+            "is_dry_run": False,
+            "message": "This run was not a dry run - no diff preview available",
+            "summary": None,
+            "operations": []
+        }
+
+    try:
+        logs = await run_manager.get_logs(run_id, tail=None)  # Get full logs
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Logs not found")
+
+    # Parse dry run operations from logs
+    operations = []
+    operation_counts = defaultdict(int)
+    collections_affected = defaultdict(lambda: {"added": 0, "removed": 0, "updated": 0})
+
+    # Patterns for parsing dry run logs
+    dry_run_pattern = re.compile(
+        r'\[DRY RUN\] Would (\w+)(?:\s+on\s+[\'"]([^"\']+)[\'"])?:\s*(.*)',
+        re.IGNORECASE
+    )
+
+    collection_add_pattern = re.compile(
+        r'(?:Would add|Adding)\s+(\d+)\s+(?:items?|movies?|shows?)\s+to\s+[\'"]([^"\']+)[\'"]',
+        re.IGNORECASE
+    )
+
+    collection_remove_pattern = re.compile(
+        r'(?:Would remove|Removing)\s+(\d+)\s+(?:items?|movies?|shows?)\s+from\s+[\'"]([^"\']+)[\'"]',
+        re.IGNORECASE
+    )
+
+    summary_section = False
+    summary_data = {}
+
+    for line in logs:
+        # Check for dry run operations
+        match = dry_run_pattern.search(line)
+        if match:
+            operation = match.group(1).lower()
+            target = match.group(2) or "Unknown"
+            details = match.group(3).strip()
+
+            operations.append({
+                "operation": operation,
+                "target": target,
+                "details": details
+            })
+            operation_counts[operation] += 1
+
+            # Categorize by collection impact
+            if "playlist_add" in operation or "add_item" in operation:
+                collections_affected[target]["added"] += 1
+            elif "playlist_remove" in operation or "remove_item" in operation:
+                collections_affected[target]["removed"] += 1
+            elif "edit" in operation or "upload" in operation:
+                collections_affected[target]["updated"] += 1
+            continue
+
+        # Check for collection add patterns
+        add_match = collection_add_pattern.search(line)
+        if add_match:
+            count = int(add_match.group(1))
+            collection = add_match.group(2)
+            collections_affected[collection]["added"] += count
+            operation_counts["collection_add"] += count
+            continue
+
+        # Check for collection remove patterns
+        remove_match = collection_remove_pattern.search(line)
+        if remove_match:
+            count = int(remove_match.group(1))
+            collection = remove_match.group(2)
+            collections_affected[collection]["removed"] += count
+            operation_counts["collection_remove"] += count
+            continue
+
+        # Parse summary section
+        if "DRY RUN SUMMARY" in line.upper():
+            summary_section = True
+            continue
+
+        if summary_section:
+            if "Total operations" in line:
+                total_match = re.search(r'(\d+)', line)
+                if total_match:
+                    summary_data["total_operations"] = int(total_match.group(1))
+            elif ":" in line and "-" in line:
+                # Parse operation count lines like "  - edit_metadata: 12"
+                op_match = re.match(r'\s*-?\s*(\w+):\s*(\d+)', line)
+                if op_match:
+                    op_name = op_match.group(1)
+                    op_count = int(op_match.group(2))
+                    if "by_operation" not in summary_data:
+                        summary_data["by_operation"] = {}
+                    summary_data["by_operation"][op_name] = op_count
+
+    # Build collection summary
+    collection_summary = []
+    for name, changes in collections_affected.items():
+        if any(changes.values()):
+            collection_summary.append({
+                "name": name,
+                "items_added": changes["added"],
+                "items_removed": changes["removed"],
+                "items_updated": changes["updated"]
+            })
+
+    # Sort by total impact
+    collection_summary.sort(
+        key=lambda x: x["items_added"] + x["items_removed"] + x["items_updated"],
+        reverse=True
+    )
+
+    return {
+        "run_id": run_id,
+        "is_dry_run": True,
+        "summary": {
+            "total_operations": summary_data.get("total_operations", len(operations)),
+            "operations_by_type": dict(operation_counts),
+            "collections_affected": len(collection_summary),
+            "total_added": sum(c["items_added"] for c in collection_summary),
+            "total_removed": sum(c["items_removed"] for c in collection_summary),
+            "total_updated": sum(c["items_updated"] for c in collection_summary),
+        },
+        "collections": collection_summary[:50],  # Limit to top 50
+        "operations": operations[:100],  # Limit to first 100 operations
+    }
+
+
 # ============================================================================
 # WebSocket for Live Logs
 # ============================================================================

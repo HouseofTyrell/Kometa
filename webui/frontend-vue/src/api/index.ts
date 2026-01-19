@@ -21,10 +21,12 @@ export {
   useRunDetail,
   useRunStatus,
   useRunLogs,
+  useRunDiff,
   useStartRun,
   useStartApplyRun,
   useStopRun,
   useDeleteRun,
+  type DryRunDiffResponse,
 } from './run';
 
 // Export media API
