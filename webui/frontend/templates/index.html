@@ -92,6 +92,45 @@
                     <p class="text-muted">System status and quick actions</p>
                 </div>
 
+                <!-- Quick Actions -->
+                <div class="dashboard-section">
+                    <h3 class="dashboard-section-title">Quick Actions</h3>
+                    <div class="dashboard-actions">
+                        <button class="dashboard-action-btn" id="dashboard-action-upload">
+                            <span class="action-icon">📤</span>
+                            <span class="action-label">Upload Config</span>
+                            <span class="action-desc">Import a config.yml file</span>
+                        </button>
+                        <button class="dashboard-action-btn" id="dashboard-action-wizard">
+                            <span class="action-icon">🧙</span>
+                            <span class="action-label">Setup Wizard</span>
+                            <span class="action-desc">Run guided setup again</span>
+                        </button>
+                        <button class="dashboard-action-btn" id="dashboard-action-run">
+                            <span class="action-icon">▶️</span>
+                            <span class="action-label">Run Kometa</span>
+                            <span class="action-desc">Execute with current config</span>
+                        </button>
+                        <button class="dashboard-action-btn" id="dashboard-action-dry-run">
+                            <span class="action-icon">🔍</span>
+                            <span class="action-label">Dry Run</span>
+                            <span class="action-desc">Preview changes without applying</span>
+                        </button>
+                        <button class="dashboard-action-btn" id="dashboard-action-validate">
+                            <span class="action-icon">✓</span>
+                            <span class="action-label">Validate Config</span>
+                            <span class="action-desc">Check configuration for errors</span>
+                        </button>
+                        <button class="dashboard-action-btn" id="dashboard-action-backup">
+                            <span class="action-icon">💾</span>
+                            <span class="action-label">Backup Config</span>
+                            <span class="action-desc">Save a backup of current config</span>
+                        </button>
+                    </div>
+                    <!-- Hidden file input for dashboard config upload -->
+                    <input type="file" id="dashboard-config-file-input" accept=".yml,.yaml" style="display: none;">
+                </div>
+
                 <!-- Connection Status Cards -->
                 <div class="dashboard-section">
                     <h3 class="dashboard-section-title">Connection Status</h3>
@@ -149,38 +188,6 @@
                     </div>
                 </div>
 
-                <!-- Quick Actions -->
-                <div class="dashboard-section">
-                    <h3 class="dashboard-section-title">Quick Actions</h3>
-                    <div class="dashboard-actions">
-                        <button class="dashboard-action-btn" id="dashboard-action-run">
-                            <span class="action-icon">▶️</span>
-                            <span class="action-label">Run Kometa</span>
-                            <span class="action-desc">Execute with current config</span>
-                        </button>
-                        <button class="dashboard-action-btn" id="dashboard-action-dry-run">
-                            <span class="action-icon">🔍</span>
-                            <span class="action-label">Dry Run</span>
-                            <span class="action-desc">Preview changes without applying</span>
-                        </button>
-                        <button class="dashboard-action-btn" id="dashboard-action-validate">
-                            <span class="action-icon">✓</span>
-                            <span class="action-label">Validate Config</span>
-                            <span class="action-desc">Check configuration for errors</span>
-                        </button>
-                        <button class="dashboard-action-btn" id="dashboard-action-backup">
-                            <span class="action-icon">💾</span>
-                            <span class="action-label">Backup Config</span>
-                            <span class="action-desc">Save a backup of current config</span>
-                        </button>
-                        <button class="dashboard-action-btn" id="dashboard-action-wizard">
-                            <span class="action-icon">🧙</span>
-                            <span class="action-label">Setup Wizard</span>
-                            <span class="action-desc">Run guided setup again</span>
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Recent Activity -->
                 <div class="dashboard-section">
                     <h3 class="dashboard-section-title">Recent Activity</h3>
@@ -196,6 +203,20 @@
             <div class="config-header">
                 <h2>Configuration</h2>
                 <div class="config-actions" role="toolbar" aria-label="Configuration actions">
+                    <!-- Backups Dropdown -->
+                    <div class="backups-dropdown">
+                        <button id="btn-backups-dropdown" class="btn btn-secondary" aria-expanded="false" aria-haspopup="true">
+                            Backups <span class="dropdown-chevron">▼</span>
+                        </button>
+                        <div class="backups-dropdown-menu" id="backups-dropdown-menu">
+                            <div class="backups-dropdown-header">
+                                <span>Configuration Backups</span>
+                            </div>
+                            <div id="backups-list" class="backups-list">
+                                <p class="loading">Loading backups...</p>
+                            </div>
+                        </div>
+                    </div>
                     <button id="btn-upload-config" class="btn btn-secondary" aria-label="Upload configuration file">Upload</button>
                     <button id="btn-load-config" class="btn btn-secondary" aria-label="Reload configuration from server">Reload</button>
                     <button id="btn-validate" class="btn btn-secondary" aria-label="Validate configuration">Validate</button>
@@ -230,135 +251,168 @@
             <!-- Validation Messages -->
             <div id="validation-messages" class="validation-messages hidden"></div>
 
-            <!-- Config Editor Container with Sidebar -->
-            <div class="config-editor-container config-editor-layout" id="config-editor-container">
-                <!-- Sidebar Navigation -->
-                <aside class="config-sidebar">
-                    <nav class="config-sidebar-nav">
-                        <div class="config-nav-group">
-                            <div class="config-nav-group-label">Core</div>
-                            <button class="config-nav-item active" data-subtab="plex">
-                                <span class="nav-icon">📺</span>
-                                <span class="nav-label">Plex</span>
-                                <span class="nav-badge">Required</span>
+            <!-- Config Layout Controls -->
+            <div class="config-layout-controls" id="config-layout-controls">
+                <!-- Section Navigation with Prev/Next -->
+                <div class="config-section-nav">
+                    <button class="config-nav-arrow" id="config-prev-section" title="Previous section" aria-label="Previous section">
+                        <span>◀</span>
+                    </button>
+                    <!-- Collapsible Section Dropdown -->
+                    <div class="config-section-dropdown">
+                        <button class="config-section-dropdown-btn" id="config-section-dropdown-btn" aria-expanded="false" aria-haspopup="true">
+                            <span class="dropdown-icon" id="current-section-icon">📺</span>
+                            <span class="dropdown-label" id="current-section-label">Plex</span>
+                            <span class="dropdown-chevron">▼</span>
+                        </button>
+                    <div class="config-section-dropdown-menu" id="config-section-dropdown-menu" role="menu">
+                        <div class="dropdown-group">
+                            <div class="dropdown-group-label">Core</div>
+                            <button class="dropdown-item active" data-subtab="plex" role="menuitem">
+                                <span class="dropdown-item-icon">📺</span>
+                                <span class="dropdown-item-label">Plex</span>
+                                <span class="dropdown-item-badge">Required</span>
                             </button>
-                            <button class="config-nav-item" data-subtab="tmdb">
-                                <span class="nav-icon">🎬</span>
-                                <span class="nav-label">TMDb</span>
-                                <span class="nav-badge">Required</span>
+                            <button class="dropdown-item" data-subtab="tmdb" role="menuitem">
+                                <span class="dropdown-item-icon">🎬</span>
+                                <span class="dropdown-item-label">TMDb</span>
+                                <span class="dropdown-item-badge">Required</span>
                             </button>
-                            <button class="config-nav-item" data-subtab="libraries">
-                                <span class="nav-icon">📚</span>
-                                <span class="nav-label">Libraries</span>
-                                <span class="nav-badge">Required</span>
-                            </button>
-                        </div>
-                        <div class="config-nav-group">
-                            <div class="config-nav-group-label">Settings</div>
-                            <button class="config-nav-item" data-subtab="settings">
-                                <span class="nav-icon">⚙️</span>
-                                <span class="nav-label">Settings</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="scheduling">
-                                <span class="nav-icon">🕐</span>
-                                <span class="nav-label">Scheduling</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="operations">
-                                <span class="nav-icon">⚡</span>
-                                <span class="nav-label">Operations</span>
-                                <span class="nav-badge optional">Optional</span>
+                            <button class="dropdown-item" data-subtab="libraries" role="menuitem">
+                                <span class="dropdown-item-icon">📚</span>
+                                <span class="dropdown-item-label">Libraries</span>
+                                <span class="dropdown-item-badge">Required</span>
                             </button>
                         </div>
-                        <div class="config-nav-group">
-                            <div class="config-nav-group-label">Builders</div>
-                            <button class="config-nav-item" data-subtab="collections">
-                                <span class="nav-icon">📚</span>
-                                <span class="nav-label">Collections</span>
-                                <span class="nav-badge optional">Optional</span>
+                        <div class="dropdown-group">
+                            <div class="dropdown-group-label">Settings</div>
+                            <button class="dropdown-item" data-subtab="settings" role="menuitem">
+                                <span class="dropdown-item-icon">⚙️</span>
+                                <span class="dropdown-item-label">Settings</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
                             </button>
-                            <button class="config-nav-item" data-subtab="playlists">
-                                <span class="nav-icon">🎵</span>
-                                <span class="nav-label">Playlists</span>
-                                <span class="nav-badge optional">Optional</span>
+                            <button class="dropdown-item" data-subtab="scheduling" role="menuitem">
+                                <span class="dropdown-item-icon">🕐</span>
+                                <span class="dropdown-item-label">Scheduling</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
                             </button>
-                        </div>
-                        <div class="config-nav-group">
-                            <div class="config-nav-group-label">Integrations</div>
-                            <button class="config-nav-item" data-subtab="arr">
-                                <span class="nav-icon">📥</span>
-                                <span class="nav-label">Arr Services</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="metadata">
-                                <span class="nav-icon">🏷️</span>
-                                <span class="nav-label">Metadata</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="lists">
-                                <span class="nav-icon">📋</span>
-                                <span class="nav-label">Lists</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="notifications">
-                                <span class="nav-icon">🔔</span>
-                                <span class="nav-label">Notifications</span>
-                                <span class="nav-badge optional">Optional</span>
+                            <button class="dropdown-item" data-subtab="operations" role="menuitem">
+                                <span class="dropdown-item-icon">⚡</span>
+                                <span class="dropdown-item-label">Operations</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
                             </button>
                         </div>
-                        <div class="config-nav-group">
-                            <div class="config-nav-group-label">Advanced</div>
-                            <button class="config-nav-item" data-subtab="mappers">
-                                <span class="nav-icon">🔄</span>
-                                <span class="nav-label">Data Mappers</span>
-                                <span class="nav-badge optional">Optional</span>
+                        <div class="dropdown-group">
+                            <div class="dropdown-group-label">Builders</div>
+                            <button class="dropdown-item" data-subtab="collections" role="menuitem">
+                                <span class="dropdown-item-icon">📚</span>
+                                <span class="dropdown-item-label">Collections</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
                             </button>
-                            <button class="config-nav-item" data-subtab="metadata-editor">
-                                <span class="nav-icon">🎬</span>
-                                <span class="nav-label">Metadata Editor</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="advanced-ops">
-                                <span class="nav-icon">🔧</span>
-                                <span class="nav-label">Advanced Ops</span>
-                                <span class="nav-badge optional">Optional</span>
-                            </button>
-                            <button class="config-nav-item" data-subtab="yaml">
-                                <span class="nav-icon">📝</span>
-                                <span class="nav-label">Raw YAML</span>
+                            <button class="dropdown-item" data-subtab="playlists" role="menuitem">
+                                <span class="dropdown-item-icon">🎵</span>
+                                <span class="dropdown-item-label">Playlists</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
                             </button>
                         </div>
-                    </nav>
-
-                    <!-- Connection Status -->
-                    <div class="sidebar-status-section">
-                        <div class="sidebar-status-title">Status</div>
-                        <div class="sidebar-status-item">
-                            <span class="status-name">Plex</span>
-                            <span class="status-indicator">
-                                <span class="status-dot" id="sidebar-plex-status"></span>
-                            </span>
+                        <div class="dropdown-group">
+                            <div class="dropdown-group-label">Integrations</div>
+                            <button class="dropdown-item" data-subtab="arr" role="menuitem">
+                                <span class="dropdown-item-icon">📥</span>
+                                <span class="dropdown-item-label">Arr Services</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
+                            <button class="dropdown-item" data-subtab="metadata" role="menuitem">
+                                <span class="dropdown-item-icon">🏷️</span>
+                                <span class="dropdown-item-label">Metadata</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
+                            <button class="dropdown-item" data-subtab="lists" role="menuitem">
+                                <span class="dropdown-item-icon">📋</span>
+                                <span class="dropdown-item-label">Lists</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
+                            <button class="dropdown-item" data-subtab="notifications" role="menuitem">
+                                <span class="dropdown-item-icon">🔔</span>
+                                <span class="dropdown-item-label">Notifications</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
                         </div>
-                        <div class="sidebar-status-item">
-                            <span class="status-name">TMDb</span>
-                            <span class="status-indicator">
-                                <span class="status-dot" id="sidebar-tmdb-status"></span>
-                            </span>
+                        <div class="dropdown-group">
+                            <div class="dropdown-group-label">Advanced</div>
+                            <button class="dropdown-item" data-subtab="mappers" role="menuitem">
+                                <span class="dropdown-item-icon">🔄</span>
+                                <span class="dropdown-item-label">Data Mappers</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
+                            <button class="dropdown-item" data-subtab="metadata-editor" role="menuitem">
+                                <span class="dropdown-item-icon">🎬</span>
+                                <span class="dropdown-item-label">Metadata Editor</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
+                            <button class="dropdown-item" data-subtab="advanced-ops" role="menuitem">
+                                <span class="dropdown-item-icon">🔧</span>
+                                <span class="dropdown-item-label">Advanced Ops</span>
+                                <span class="dropdown-item-badge optional">Optional</span>
+                            </button>
                         </div>
                     </div>
+                    </div>
+                    <button class="config-nav-arrow" id="config-next-section" title="Next section" aria-label="Next section">
+                        <span>▶</span>
+                    </button>
+                </div>
 
-                    <!-- YAML Preview Toggle -->
-                    <div class="config-sidebar-footer">
-                        <button id="btn-toggle-yaml-preview" class="btn-toggle-preview" title="Toggle live YAML preview">
-                            <span>📄</span>
-                            <span>YAML Preview</span>
+                <!-- View Mode Toggle -->
+                <div class="config-view-toggle">
+                    <span class="view-toggle-label">View:</span>
+                    <div class="view-toggle-buttons" role="group" aria-label="Editor view mode">
+                        <button class="view-toggle-btn" data-view="gui-only" title="GUI Form Only">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <line x1="9" y1="9" x2="15" y2="9"/>
+                                <line x1="9" y1="13" x2="15" y2="13"/>
+                                <line x1="9" y1="17" x2="12" y2="17"/>
+                            </svg>
+                            <span>GUI</span>
+                        </button>
+                        <button class="view-toggle-btn active" data-view="split" title="Split View">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <line x1="12" y1="3" x2="12" y2="21"/>
+                            </svg>
+                            <span>Split</span>
+                        </button>
+                        <button class="view-toggle-btn" data-view="yaml-only" title="YAML Editor Only">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <polyline points="8,8 6,10 8,12"/>
+                                <polyline points="16,8 18,10 16,12"/>
+                                <line x1="10" y1="16" x2="14" y2="16"/>
+                            </svg>
+                            <span>YAML</span>
                         </button>
                     </div>
-                </aside>
+                </div>
 
-                <!-- Main Content Area -->
-                <div class="config-content-area config-subtab-content">
+                <!-- Connection Status (compact) -->
+                <div class="config-status-compact">
+                    <div class="status-compact-item" title="Plex Connection">
+                        <span class="status-dot" id="header-plex-status"></span>
+                        <span>Plex</span>
+                    </div>
+                    <div class="status-compact-item" title="TMDb Connection">
+                        <span class="status-dot" id="header-tmdb-status"></span>
+                        <span>TMDb</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config Editor Container with Split View -->
+            <div class="config-editor-container config-split-layout" id="config-editor-container" data-view="split" style="display: grid !important; grid-template-columns: 1fr 1fr !important;">
+
+                <!-- Main Content Area (Left Column) -->
+                <div class="config-content-area config-subtab-content" style="grid-column: 1;">
                     <!-- Plex Sub-tab -->
                     <div id="subtab-plex" class="subtab-panel active">
                         <div class="section-header">
@@ -3645,37 +3699,45 @@ libraries:
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <!-- Live YAML Preview Panel -->
-                <aside class="yaml-preview-panel" id="yaml-preview-panel">
-                    <div class="yaml-preview-header">
+            <!-- YAML Editor Panel (Right Column) -->
+            <aside class="yaml-editor-panel" id="yaml-editor-panel" style="grid-column: 2; display: flex !important; flex-direction: column; background: #1a1a2e; border-left: 1px solid #333; min-width: 400px; min-height: 500px;">
+                    <div class="yaml-editor-header">
                         <h4>
-                            <span>📄</span>
-                            Live Preview
-                            <span class="preview-badge">Synced</span>
+                            <span>📝</span>
+                            <span id="yaml-section-title">Section YAML</span>
+                            <span class="sync-badge" id="yaml-sync-badge">Synced</span>
                         </h4>
-                        <div class="yaml-preview-actions">
-                            <button class="btn btn-sm btn-ghost" id="btn-copy-yaml" title="Copy YAML">
+                        <div class="yaml-editor-actions">
+                            <button class="btn btn-sm btn-ghost" id="btn-copy-yaml" title="Copy section YAML to clipboard">
                                 Copy
                             </button>
-                            <button class="btn btn-sm btn-ghost" id="btn-close-preview" title="Close preview">
-                                ✕
+                            <button class="btn btn-sm btn-ghost" id="btn-format-yaml" title="Format YAML">
+                                Format
                             </button>
                         </div>
                     </div>
-                    <div class="yaml-preview-content">
-                        <pre class="yaml-preview-code" id="yaml-preview-code"># Loading...</pre>
+                    <div class="yaml-editor-content">
+                        <textarea id="yaml-split-editor" class="yaml-split-editor" spellcheck="false" placeholder="# Kometa Configuration
+# Edit your config.yml here...
+
+plex:
+  url: http://plex:32400
+  token: YOUR_PLEX_TOKEN
+
+libraries:
+  Movies:
+    collection_files:
+      - file: config/Movies.yml
+"></textarea>
+                    </div>
+                    <div class="yaml-editor-footer">
+                        <span class="yaml-line-count" id="yaml-line-count">0 lines</span>
+                        <span class="yaml-status" id="yaml-status">Ready</span>
                     </div>
                 </aside>
             </div>
-
-            <!-- Backup List (Collapsible) -->
-            <details class="backups-section">
-                <summary><h3>Backups</h3></summary>
-                <div id="backups-list" class="backups-list">
-                    <p class="loading">Loading backups...</p>
-                </div>
-            </details>
         </section>
 
         <!-- Overlays Tab -->

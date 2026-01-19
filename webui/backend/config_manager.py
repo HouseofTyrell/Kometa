@@ -59,11 +59,27 @@ class ConfigManager:
         }
 
     def save_config(self, content: str) -> Dict[str, Any]:
-        """Save config.yml with automatic backup."""
+        """Save config.yml with automatic backup.
+
+        Skips saving if content is identical to current config.
+        Skips backup if current config is identical to most recent backup.
+        """
         # Validate first
         validation = self.validate_yaml(content)
 
-        # Create backup of existing config
+        # Check if content is identical to current config
+        if self.config_path.exists():
+            current_content = self.config_path.read_text(encoding="utf-8")
+            if content == current_content:
+                # Content is identical, no need to save
+                return {
+                    "success": True,
+                    "backup_path": None,
+                    "validation": validation,
+                    "message": "No changes detected, config unchanged"
+                }
+
+        # Create backup of existing config (returns None if identical to recent backup)
         backup_path = None
         if self.config_path.exists():
             backup_path = self._create_backup()
@@ -161,16 +177,34 @@ class ConfigManager:
             "sections_found": list(parsed.keys()) if isinstance(parsed, dict) else []
         }
 
-    def _create_backup(self) -> Path:
-        """Create a timestamped backup of the current config."""
+    def _create_backup(self) -> Optional[Path]:
+        """Create a timestamped backup of the current config.
+
+        Returns None if the current config is identical to the most recent backup.
+        """
         self.backup_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read current config content
+        content = self.config_path.read_text(encoding="utf-8")
+
+        # Check if identical to most recent backup
+        existing_backups = sorted(self.backup_dir.glob("config.yml.*"), reverse=True)
+        if existing_backups:
+            most_recent = existing_backups[0]
+            try:
+                recent_content = most_recent.read_text(encoding="utf-8")
+                if content == recent_content:
+                    # Content is identical, no need to create backup
+                    return None
+            except Exception:
+                # If we can't read the backup, create a new one to be safe
+                pass
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         backup_name = f"config.yml.{timestamp}"
         backup_path = self.backup_dir / backup_name
 
         # Copy current config to backup
-        content = self.config_path.read_text(encoding="utf-8")
         backup_path.write_text(content, encoding="utf-8")
 
         return backup_path
@@ -358,16 +392,31 @@ class ConfigManager:
             return None
 
     def _save_parsed_config(self, config: Dict) -> bool:
-        """Save a parsed config dict back to config.yml with backup."""
+        """Save a parsed config dict back to config.yml with backup.
+
+        Skips saving if content is identical to current config.
+        Skips backup if current config is identical to most recent backup.
+        """
         try:
             from io import StringIO
-            # Create backup first
-            if self.config_path.exists():
-                self._create_backup()
-            # Write config
+            # Generate new content
             stream = StringIO()
             self.yaml.dump(config, stream)
-            self.config_path.write_text(stream.getvalue(), encoding="utf-8")
+            new_content = stream.getvalue()
+
+            # Check if content is identical to current config
+            if self.config_path.exists():
+                current_content = self.config_path.read_text(encoding="utf-8")
+                if new_content == current_content:
+                    # Content is identical, no need to save
+                    return True
+
+            # Create backup first (returns None if identical to recent backup)
+            if self.config_path.exists():
+                self._create_backup()
+
+            # Write config
+            self.config_path.write_text(new_content, encoding="utf-8")
             return True
         except Exception as e:
             print(f"Error saving config: {e}")

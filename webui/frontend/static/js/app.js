@@ -368,10 +368,14 @@ const yamlPreview = {
 const sidebarStatus = {
     plexDot: null,
     tmdbDot: null,
+    headerPlexDot: null,
+    headerTmdbDot: null,
 
     init() {
         this.plexDot = document.getElementById('sidebar-plex-status');
         this.tmdbDot = document.getElementById('sidebar-tmdb-status');
+        this.headerPlexDot = document.getElementById('header-plex-status');
+        this.headerTmdbDot = document.getElementById('header-tmdb-status');
     },
 
     updatePlex(connected) {
@@ -379,12 +383,20 @@ const sidebarStatus = {
             this.plexDot.classList.toggle('connected', connected);
             this.plexDot.classList.toggle('disconnected', !connected);
         }
+        if (this.headerPlexDot) {
+            this.headerPlexDot.classList.toggle('connected', connected);
+            this.headerPlexDot.classList.toggle('disconnected', !connected);
+        }
     },
 
     updateTmdb(connected) {
         if (this.tmdbDot) {
             this.tmdbDot.classList.toggle('connected', connected);
             this.tmdbDot.classList.toggle('disconnected', !connected);
+        }
+        if (this.headerTmdbDot) {
+            this.headerTmdbDot.classList.toggle('connected', connected);
+            this.headerTmdbDot.classList.toggle('disconnected', !connected);
         }
     }
 };
@@ -438,6 +450,44 @@ const dashboard = {
         document.getElementById('dashboard-action-wizard')?.addEventListener('click', () => {
             setupWizard.show();
         });
+
+        // Upload config from dashboard
+        document.getElementById('dashboard-action-upload')?.addEventListener('click', () => {
+            document.getElementById('dashboard-config-file-input')?.click();
+        });
+
+        // Handle dashboard config file upload
+        const dashboardFileInput = document.getElementById('dashboard-config-file-input');
+        if (dashboardFileInput) {
+            dashboardFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        // Load the config into the editor
+                        elements.configEditor.value = event.target.result;
+                        // Hide source selector and show editor
+                        document.getElementById('config-source-selector').style.display = 'none';
+                        document.getElementById('config-editor-container').style.display = 'grid';
+                        // Validate and sync
+                        validateConfig();
+                        syncYamlToForms();
+                        // Switch to config tab
+                        switchTab('config');
+                        // Add activity
+                        this.addActivity('Config file uploaded: ' + file.name, true);
+                        toast.success('Config file loaded successfully');
+                    };
+                    reader.onerror = () => {
+                        toast.error('Failed to read the uploaded file');
+                        this.addActivity('Config file upload failed', false);
+                    };
+                    reader.readAsText(file);
+                }
+                // Reset input for reuse
+                e.target.value = '';
+            });
+        }
     },
 
     async testPlex() {
@@ -4516,7 +4566,7 @@ async function loadConfig() {
 
             // Hide source selector once loaded
             document.getElementById('config-source-selector').style.display = 'none';
-            document.getElementById('config-editor-container').style.display = 'block';
+            document.getElementById('config-editor-container').style.display = 'grid';
 
             if (result.validation) {
                 showValidation(result.validation);
@@ -4525,6 +4575,14 @@ async function loadConfig() {
             // Sync forms and render libraries after loading config
             syncYamlToForms();
             renderLibrariesFromConfig();
+
+            // Update split view YAML editor if initialized
+            if (typeof configSplitView !== 'undefined' && configSplitView.updateYamlSplitEditor) {
+                configSplitView.updateYamlSplitEditor();
+            }
+
+            // Test connections after config is loaded and synced to forms
+            testConnectionsOnLoad();
         } else {
             // Show source selector
             document.getElementById('config-source-selector').style.display = 'block';
@@ -4544,20 +4602,37 @@ async function saveConfig() {
         const content = elements.configEditor.value;
         const result = await api.post('/config', { content });
 
-        showValidation({
-            valid: true,
-            errors: [],
-            warnings: result.validation?.warnings || [],
-            message: `Config saved successfully. Backup created: ${result.backup_path || 'N/A'}`
-        });
+        // Check if no changes were detected
+        if (result.message && result.message.includes('No changes')) {
+            showValidation({
+                valid: true,
+                errors: [],
+                warnings: result.validation?.warnings || [],
+                message: 'No changes detected - configuration unchanged'
+            });
 
-        // Show toast notification
-        toast.success('Configuration saved successfully', {
-            title: 'Saved'
-        });
+            toast.info('No changes detected', {
+                title: 'Config Unchanged'
+            });
+        } else {
+            const backupMsg = result.backup_path
+                ? `Backup created: ${result.backup_path.split('/').pop()}`
+                : 'No backup needed (identical to previous)';
 
-        // Reload backups list
-        loadBackups();
+            showValidation({
+                valid: true,
+                errors: [],
+                warnings: result.validation?.warnings || [],
+                message: `Config saved successfully. ${backupMsg}`
+            });
+
+            toast.success('Configuration saved successfully', {
+                title: 'Saved'
+            });
+
+            // Reload backups list
+            loadBackups();
+        }
     } catch (error) {
         showValidation({
             valid: false,
@@ -5026,6 +5101,11 @@ function syncFormsToYaml() {
 
         // Update YAML preview panel
         yamlPreview.update();
+
+        // Update split YAML editor to show the current section
+        if (typeof configSplitView !== 'undefined' && configSplitView.updateYamlSplitEditor) {
+            configSplitView.updateYamlSplitEditor();
+        }
 
     } finally {
         isSyncing = false;
@@ -5991,6 +6071,220 @@ async function testTmdbConnection() {
         toast.error(error.message, { title: 'TMDb Connection' });
         sidebarStatus.updateTmdb(false);
     }
+}
+
+/**
+ * Test connections automatically when config is loaded
+ * Tests all configured services and updates their status indicators
+ */
+async function testConnectionsOnLoad() {
+    console.log('Testing configured service connections...');
+
+    // Helper to update test result element
+    const updateTestResult = (elementId, success, successMsg, errorMsg) => {
+        const el = document.getElementById(elementId);
+        if (el) {
+            el.textContent = success ? `✓ ${successMsg}` : `✗ ${errorMsg}`;
+            el.className = `test-result ${success ? 'success' : 'error'}`;
+        }
+    };
+
+    // Test Plex
+    const plexUrl = document.getElementById('plex-url')?.value;
+    const plexToken = document.getElementById('plex-token')?.value;
+    if (plexUrl && plexToken) {
+        try {
+            const result = await api.post('/test/plex', { url: plexUrl, token: plexToken });
+            sidebarStatus.updatePlex(result.success);
+            updateTestResult('plex-test-result', result.success,
+                `Connected to ${result.server_name || 'Plex'}`,
+                result.error || 'Connection failed');
+        } catch (error) {
+            sidebarStatus.updatePlex(false);
+            updateTestResult('plex-test-result', false, '', error.message);
+        }
+    } else {
+        sidebarStatus.updatePlex(false);
+    }
+
+    // Test TMDb
+    const tmdbApikey = document.getElementById('tmdb-apikey')?.value;
+    if (tmdbApikey) {
+        try {
+            const result = await api.post('/test/tmdb', { apikey: tmdbApikey });
+            sidebarStatus.updateTmdb(result.success);
+            updateTestResult('tmdb-test-result', result.success,
+                'API key is valid',
+                result.error || 'Invalid API key');
+        } catch (error) {
+            sidebarStatus.updateTmdb(false);
+            updateTestResult('tmdb-test-result', false, '', error.message);
+        }
+    } else {
+        sidebarStatus.updateTmdb(false);
+    }
+
+    // Test Radarr
+    const radarrUrl = document.getElementById('radarr-url')?.value;
+    const radarrToken = document.getElementById('radarr-token')?.value;
+    if (radarrUrl && radarrToken) {
+        try {
+            const result = await api.post('/test/radarr', { url: radarrUrl, token: radarrToken });
+            updateTestResult('radarr-test-result', result.success,
+                'Connected to Radarr',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('radarr-test-result', false, '', error.message);
+        }
+    }
+
+    // Test Sonarr
+    const sonarrUrl = document.getElementById('sonarr-url')?.value;
+    const sonarrToken = document.getElementById('sonarr-token')?.value;
+    if (sonarrUrl && sonarrToken) {
+        try {
+            const result = await api.post('/test/sonarr', { url: sonarrUrl, token: sonarrToken });
+            updateTestResult('sonarr-test-result', result.success,
+                'Connected to Sonarr',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('sonarr-test-result', false, '', error.message);
+        }
+    }
+
+    // Test Tautulli
+    const tautulliUrl = document.getElementById('tautulli-url')?.value;
+    const tautulliApikey = document.getElementById('tautulli-apikey')?.value;
+    if (tautulliUrl && tautulliApikey) {
+        try {
+            const result = await api.post('/test/tautulli', { url: tautulliUrl, apikey: tautulliApikey });
+            updateTestResult('tautulli-test-result', result.success,
+                'Connected to Tautulli',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('tautulli-test-result', false, '', error.message);
+        }
+    }
+
+    // Test Trakt
+    const traktClientId = document.getElementById('trakt-client-id')?.value;
+    const traktClientSecret = document.getElementById('trakt-client-secret')?.value;
+    if (traktClientId && traktClientSecret) {
+        try {
+            const result = await api.post('/test/trakt', {
+                client_id: traktClientId,
+                client_secret: traktClientSecret
+            });
+            updateTestResult('trakt-test-result', result.success,
+                'Trakt credentials valid',
+                result.error || 'Invalid credentials');
+        } catch (error) {
+            updateTestResult('trakt-test-result', false, '', error.message);
+        }
+    }
+
+    // Test MAL
+    const malClientId = document.getElementById('mal-client-id')?.value;
+    const malClientSecret = document.getElementById('mal-client-secret')?.value;
+    if (malClientId && malClientSecret) {
+        try {
+            const result = await api.post('/test/mal', {
+                client_id: malClientId,
+                client_secret: malClientSecret
+            });
+            updateTestResult('mal-test-result', result.success,
+                'MAL credentials valid',
+                result.error || 'Invalid credentials');
+        } catch (error) {
+            updateTestResult('mal-test-result', false, '', error.message);
+        }
+    }
+
+    // Test AniDB
+    const anidbUsername = document.getElementById('anidb-username')?.value;
+    const anidbPassword = document.getElementById('anidb-password')?.value;
+    if (anidbUsername && anidbPassword) {
+        try {
+            const result = await api.post('/test/anidb', {
+                username: anidbUsername,
+                password: anidbPassword
+            });
+            updateTestResult('anidb-test-result', result.success,
+                'AniDB credentials valid',
+                result.error || 'Invalid credentials');
+        } catch (error) {
+            updateTestResult('anidb-test-result', false, '', error.message);
+        }
+    }
+
+    // Test MDBList
+    const mdblistApikey = document.getElementById('mdblist-apikey')?.value;
+    if (mdblistApikey) {
+        try {
+            const result = await api.post('/test/mdblist', { apikey: mdblistApikey });
+            updateTestResult('mdblist-test-result', result.success,
+                'MDBList API key valid',
+                result.error || 'Invalid API key');
+        } catch (error) {
+            updateTestResult('mdblist-test-result', false, '', error.message);
+        }
+    }
+
+    // Test OMDb
+    const omdbApikey = document.getElementById('omdb-apikey')?.value;
+    if (omdbApikey) {
+        try {
+            const result = await api.post('/test/omdb', { apikey: omdbApikey });
+            updateTestResult('omdb-test-result', result.success,
+                'OMDb API key valid',
+                result.error || 'Invalid API key');
+        } catch (error) {
+            updateTestResult('omdb-test-result', false, '', error.message);
+        }
+    }
+
+    // Test Notifiarr
+    const notifiarrApikey = document.getElementById('notifiarr-apikey')?.value;
+    if (notifiarrApikey) {
+        try {
+            const result = await api.post('/test/notifiarr', { apikey: notifiarrApikey });
+            updateTestResult('notifiarr-test-result', result.success,
+                'Notifiarr connected',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('notifiarr-test-result', false, '', error.message);
+        }
+    }
+
+    // Test Gotify
+    const gotifyUrl = document.getElementById('gotify-url')?.value;
+    const gotifyToken = document.getElementById('gotify-token')?.value;
+    if (gotifyUrl && gotifyToken) {
+        try {
+            const result = await api.post('/test/gotify', { url: gotifyUrl, token: gotifyToken });
+            updateTestResult('gotify-test-result', result.success,
+                'Gotify connected',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('gotify-test-result', false, '', error.message);
+        }
+    }
+
+    // Test ntfy
+    const ntfyUrl = document.getElementById('ntfy-url')?.value;
+    const ntfyTopic = document.getElementById('ntfy-topic')?.value;
+    if (ntfyUrl && ntfyTopic) {
+        try {
+            const result = await api.post('/test/ntfy', { url: ntfyUrl, topic: ntfyTopic });
+            updateTestResult('ntfy-test-result', result.success,
+                'ntfy connected',
+                result.error || 'Connection failed');
+        } catch (error) {
+            updateTestResult('ntfy-test-result', false, '', error.message);
+        }
+    }
+
+    console.log('Connection tests completed');
 }
 
 /**
@@ -7348,7 +7642,7 @@ function initEventListeners() {
             } else {
                 // Show empty editor with template
                 document.getElementById('config-source-selector').style.display = 'none';
-                document.getElementById('config-editor-container').style.display = 'block';
+                document.getElementById('config-editor-container').style.display = 'grid';
                 elements.configEditor.value = `# Kometa Configuration
 # See https://kometa.wiki for full documentation
 
@@ -7378,7 +7672,7 @@ libraries:
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     document.getElementById('config-source-selector').style.display = 'none';
-                    document.getElementById('config-editor-container').style.display = 'block';
+                    document.getElementById('config-editor-container').style.display = 'grid';
                     elements.configEditor.value = event.target.result;
                     // Validate the uploaded config and sync to forms
                     validateConfig();
@@ -7586,6 +7880,578 @@ async function init() {
 
 // Start the app
 document.addEventListener('DOMContentLoaded', init);
+
+// ============================================================================
+// Config Split View Manager
+// ============================================================================
+
+const configSplitView = {
+    elements: {},
+    currentView: 'split',
+    currentSection: 'plex',
+    yamlSyncTimeout: null,
+    isUpdatingFromForms: false, // Flag to prevent loops when forms update YAML
+    // Order of sections for prev/next navigation
+    sectionOrder: [
+        'plex', 'tmdb', 'libraries', 'settings', 'scheduling', 'operations',
+        'collections', 'playlists', 'arr', 'metadata', 'lists', 'notifications',
+        'mappers', 'metadata-editor', 'advanced-ops'
+    ],
+    // Mapping from GUI section to YAML root keys
+    sectionToYamlKeys: {
+        'plex': ['plex'],
+        'tmdb': ['tmdb'],
+        'libraries': ['libraries'],
+        'settings': ['settings'],
+        'scheduling': ['schedule', 'run_order'],
+        'operations': ['operations'],
+        'collections': ['collections'],
+        'playlists': ['playlist_files', 'playlists'],
+        'arr': ['radarr', 'sonarr'],
+        'metadata': ['tautulli', 'omdb', 'mdblist', 'anidb', 'mal'],
+        'lists': ['trakt', 'imdb', 'letterboxd', 'icheckmovies', 'stevenlu', 'anilist', 'flixpatrol'],
+        'notifications': ['notifiarr', 'gotify', 'ntfy', 'webhooks'],
+        'mappers': ['tmdb_id_mappings', 'tvdb_id_mappings', 'imdb_id_mappings'],
+        'metadata-editor': ['metadata'],
+        'advanced-ops': ['cache', 'asset_directory', 'custom_repo']
+    },
+
+    init() {
+        // Cache elements
+        this.elements = {
+            layoutControls: document.getElementById('config-layout-controls'),
+            dropdownBtn: document.getElementById('config-section-dropdown-btn'),
+            dropdownMenu: document.getElementById('config-section-dropdown-menu'),
+            currentSectionIcon: document.getElementById('current-section-icon'),
+            currentSectionLabel: document.getElementById('current-section-label'),
+            viewToggleBtns: document.querySelectorAll('.view-toggle-btn'),
+            editorContainer: document.getElementById('config-editor-container'),
+            yamlSplitEditor: document.getElementById('yaml-split-editor'),
+            yamlSyncBadge: document.getElementById('yaml-sync-badge'),
+            yamlLineCount: document.getElementById('yaml-line-count'),
+            yamlStatus: document.getElementById('yaml-status'),
+            headerPlexStatus: document.getElementById('header-plex-status'),
+            headerTmdbStatus: document.getElementById('header-tmdb-status'),
+            prevBtn: document.getElementById('config-prev-section'),
+            nextBtn: document.getElementById('config-next-section'),
+            yamlSectionTitle: document.getElementById('yaml-section-title')
+        };
+
+        // Initialize dropdown
+        this.initDropdown();
+
+        // Initialize prev/next navigation
+        this.initNavigation();
+
+        // Initialize view mode toggle
+        this.initViewToggle();
+
+        // Initialize YAML split editor sync
+        this.initYamlSync();
+
+        // Initialize copy and format buttons
+        this.initYamlActions();
+    },
+
+    initDropdown() {
+        if (!this.elements.dropdownBtn || !this.elements.dropdownMenu) return;
+
+        // Toggle dropdown on button click
+        this.elements.dropdownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = this.elements.dropdownMenu.classList.contains('open');
+            this.elements.dropdownMenu.classList.toggle('open', !isOpen);
+            this.elements.dropdownBtn.setAttribute('aria-expanded', !isOpen);
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!this.elements.dropdownMenu.contains(e.target) &&
+                !this.elements.dropdownBtn.contains(e.target)) {
+                this.elements.dropdownMenu.classList.remove('open');
+                this.elements.dropdownBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        // Handle dropdown item selection
+        const dropdownItems = this.elements.dropdownMenu.querySelectorAll('.dropdown-item');
+        dropdownItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const subtab = item.dataset.subtab;
+                this.selectSection(subtab, item);
+            });
+        });
+    },
+
+    initNavigation() {
+        if (!this.elements.prevBtn || !this.elements.nextBtn) return;
+
+        // Previous button click
+        this.elements.prevBtn.addEventListener('click', () => {
+            this.navigateToPrev();
+        });
+
+        // Next button click
+        this.elements.nextBtn.addEventListener('click', () => {
+            this.navigateToNext();
+        });
+
+        // Update button states on init
+        this.updateNavButtons();
+    },
+
+    getCurrentSectionIndex() {
+        return this.sectionOrder.indexOf(this.currentSection);
+    },
+
+    navigateToPrev() {
+        const currentIndex = this.getCurrentSectionIndex();
+        if (currentIndex > 0) {
+            const prevSection = this.sectionOrder[currentIndex - 1];
+            const dropdownItem = this.elements.dropdownMenu.querySelector(`[data-subtab="${prevSection}"]`);
+            if (dropdownItem) {
+                this.selectSection(prevSection, dropdownItem);
+            }
+        }
+    },
+
+    navigateToNext() {
+        const currentIndex = this.getCurrentSectionIndex();
+        if (currentIndex < this.sectionOrder.length - 1) {
+            const nextSection = this.sectionOrder[currentIndex + 1];
+            const dropdownItem = this.elements.dropdownMenu.querySelector(`[data-subtab="${nextSection}"]`);
+            if (dropdownItem) {
+                this.selectSection(nextSection, dropdownItem);
+            }
+        }
+    },
+
+    updateNavButtons() {
+        const currentIndex = this.getCurrentSectionIndex();
+
+        // Disable prev button if at first section
+        if (this.elements.prevBtn) {
+            this.elements.prevBtn.disabled = currentIndex <= 0;
+        }
+
+        // Disable next button if at last section
+        if (this.elements.nextBtn) {
+            this.elements.nextBtn.disabled = currentIndex >= this.sectionOrder.length - 1;
+        }
+    },
+
+    selectSection(subtab, dropdownItem) {
+        // Update dropdown button display
+        const icon = dropdownItem.querySelector('.dropdown-item-icon')?.textContent || '📄';
+        const label = dropdownItem.querySelector('.dropdown-item-label')?.textContent || subtab;
+
+        if (this.elements.currentSectionIcon) {
+            this.elements.currentSectionIcon.textContent = icon;
+        }
+        if (this.elements.currentSectionLabel) {
+            this.elements.currentSectionLabel.textContent = label;
+        }
+
+        // Update active state in dropdown
+        this.elements.dropdownMenu.querySelectorAll('.dropdown-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.subtab === subtab);
+        });
+
+        // Close dropdown
+        this.elements.dropdownMenu.classList.remove('open');
+        this.elements.dropdownBtn.setAttribute('aria-expanded', 'false');
+
+        // Trigger the existing subtab switching logic
+        const panels = document.querySelectorAll('.subtab-panel');
+        const allSubtabs = document.querySelectorAll('.config-subtab, .config-nav-item');
+
+        // Sync forms before switching
+        if (currentConfigSubtab !== 'yaml' && subtab === 'yaml') {
+            syncFormsToYaml();
+        }
+        if (currentConfigSubtab === 'yaml' && subtab !== 'yaml') {
+            syncYamlToForms();
+        }
+
+        // Update all navigation items (including legacy sidebar if present)
+        allSubtabs.forEach(t => t.classList.toggle('active', t.dataset.subtab === subtab));
+
+        // Update panels
+        panels.forEach(p => {
+            const isActive = p.id === `subtab-${subtab}`;
+            p.classList.toggle('active', isActive);
+            p.classList.toggle('hidden', !isActive);
+        });
+
+        currentConfigSubtab = subtab;
+        this.currentSection = subtab;
+
+        // Update prev/next button states
+        this.updateNavButtons();
+
+        // Update YAML editor to show the new section
+        if (this.currentView === 'split' || this.currentView === 'yaml-only') {
+            this.updateYamlSplitEditor();
+        }
+
+        // Load libraries if switching to libraries tab
+        if (subtab === 'libraries') {
+            renderLibrariesFromConfig();
+        }
+    },
+
+    initViewToggle() {
+        this.elements.viewToggleBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const view = btn.dataset.view;
+                this.setView(view);
+            });
+        });
+    },
+
+    setView(view) {
+        this.currentView = view;
+
+        // Update toggle button states
+        this.elements.viewToggleBtns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === view);
+        });
+
+        // Update container data attribute
+        if (this.elements.editorContainer) {
+            this.elements.editorContainer.dataset.view = view;
+        }
+
+        // When switching to YAML-only view, sync forms to YAML first
+        if (view === 'yaml-only') {
+            syncFormsToYaml();
+            this.updateYamlSplitEditor();
+        }
+
+        // When switching to split view, ensure YAML is up to date
+        if (view === 'split') {
+            syncFormsToYaml();
+            this.updateYamlSplitEditor();
+        }
+    },
+
+    initYamlSync() {
+        if (!this.elements.yamlSplitEditor) return;
+
+        // Sync split editor with main config editor on input
+        this.elements.yamlSplitEditor.addEventListener('input', () => {
+            // Ignore input events triggered by programmatic updates from form sync
+            if (this.isUpdatingFromForms) return;
+
+            // Update sync badge to modified (don't directly update main editor - use merge)
+            this.updateSyncBadge('modified');
+
+            // Debounce YAML validation and form sync
+            if (this.yamlSyncTimeout) {
+                clearTimeout(this.yamlSyncTimeout);
+            }
+            this.yamlSyncTimeout = setTimeout(() => {
+                this.validateAndSync();
+            }, 500);
+
+            // Update line count
+            this.updateLineCount();
+        });
+    },
+
+    validateAndSync() {
+        try {
+            // Validate YAML
+            const content = this.elements.yamlSplitEditor.value;
+
+            // Try to parse to check validity
+            if (typeof jsyaml !== 'undefined') {
+                jsyaml.load(content);
+            }
+
+            // Merge the section YAML back into the full config
+            if (this.mergeSectionYaml(content)) {
+                // Sync to forms
+                syncYamlToForms();
+
+                // Update status
+                this.updateSyncBadge('synced');
+                const keys = this.sectionToYamlKeys[this.currentSection] || [];
+                const sectionLabel = keys.length > 0 ? keys.join(', ') : this.currentSection;
+                this.updateYamlStatus('valid', `Showing: ${sectionLabel}`);
+            } else {
+                this.updateSyncBadge('error');
+                this.updateYamlStatus('error', 'Failed to merge changes');
+            }
+        } catch (error) {
+            this.updateSyncBadge('error');
+            this.updateYamlStatus('error', error.message.split('\n')[0]);
+        }
+    },
+
+    updateSyncBadge(status) {
+        if (!this.elements.yamlSyncBadge) return;
+
+        this.elements.yamlSyncBadge.classList.remove('modified', 'error');
+
+        if (status === 'synced') {
+            this.elements.yamlSyncBadge.textContent = 'Synced';
+        } else if (status === 'modified') {
+            this.elements.yamlSyncBadge.classList.add('modified');
+            this.elements.yamlSyncBadge.textContent = 'Modified';
+        } else if (status === 'error') {
+            this.elements.yamlSyncBadge.classList.add('error');
+            this.elements.yamlSyncBadge.textContent = 'Error';
+        }
+    },
+
+    updateYamlStatus(type, message) {
+        if (!this.elements.yamlStatus) return;
+
+        this.elements.yamlStatus.classList.remove('valid', 'error');
+        this.elements.yamlStatus.classList.add(type);
+        this.elements.yamlStatus.textContent = message;
+    },
+
+    updateLineCount() {
+        if (!this.elements.yamlLineCount || !this.elements.yamlSplitEditor) return;
+
+        const lines = (this.elements.yamlSplitEditor.value.match(/\n/g) || []).length + 1;
+        this.elements.yamlLineCount.textContent = `${lines} lines`;
+    },
+
+    updateYamlSplitEditor() {
+        if (this.elements.yamlSplitEditor && elements.configEditor) {
+            // Set flag to prevent input handler from triggering during programmatic update
+            this.isUpdatingFromForms = true;
+
+            // Extract only the relevant section for the current GUI panel
+            const sectionYaml = this.extractSectionYaml(this.currentSection);
+            this.elements.yamlSplitEditor.value = sectionYaml;
+            this.updateLineCount();
+            this.updateSyncBadge('synced');
+
+            // Update header to show which section is displayed
+            const keys = this.sectionToYamlKeys[this.currentSection] || [];
+            const sectionLabel = keys.length > 0 ? keys.join(', ') : this.currentSection;
+
+            // Update the section title in the YAML panel header
+            if (this.elements.yamlSectionTitle) {
+                // Get a friendly name for the section
+                const friendlyNames = {
+                    'plex': 'Plex',
+                    'tmdb': 'TMDb',
+                    'libraries': 'Libraries',
+                    'settings': 'Settings',
+                    'scheduling': 'Scheduling',
+                    'operations': 'Operations',
+                    'collections': 'Collections',
+                    'playlists': 'Playlists',
+                    'arr': 'Radarr/Sonarr',
+                    'metadata': 'Metadata Services',
+                    'lists': 'Lists',
+                    'notifications': 'Notifications',
+                    'mappers': 'ID Mappers',
+                    'metadata-editor': 'Metadata Editor',
+                    'advanced-ops': 'Advanced'
+                };
+                const title = friendlyNames[this.currentSection] || this.currentSection;
+                this.elements.yamlSectionTitle.textContent = `${title} YAML`;
+            }
+
+            this.updateYamlStatus('valid', `Keys: ${sectionLabel}`);
+
+            // Reset flag after a short delay to allow the value assignment to complete
+            setTimeout(() => {
+                this.isUpdatingFromForms = false;
+            }, 10);
+        }
+    },
+
+    extractSectionYaml(section) {
+        if (!elements.configEditor || typeof jsyaml === 'undefined') {
+            return elements.configEditor?.value || '';
+        }
+
+        try {
+            const fullContent = elements.configEditor.value;
+            const parsed = jsyaml.load(fullContent);
+
+            if (!parsed || typeof parsed !== 'object') {
+                return '# No configuration loaded\n';
+            }
+
+            const keys = this.sectionToYamlKeys[section] || [];
+            if (keys.length === 0) {
+                return '# Unknown section\n';
+            }
+
+            // Extract only the relevant keys
+            const sectionData = {};
+            let hasContent = false;
+
+            for (const key of keys) {
+                if (parsed[key] !== undefined) {
+                    sectionData[key] = parsed[key];
+                    hasContent = true;
+                }
+            }
+
+            if (!hasContent) {
+                // Return a template/placeholder for unconfigured sections
+                const templates = {
+                    'plex': 'plex:\n  url: \n  token: \n',
+                    'tmdb': 'tmdb:\n  apikey: \n  language: en\n  region: US\n',
+                    'libraries': 'libraries:\n  # Add your libraries here\n  # Movies:\n  #   collection_files:\n  #     - pmm: basic\n',
+                    'settings': 'settings:\n  cache: true\n  cache_expiration: 60\n',
+                    'scheduling': 'schedule:\n  # run_order: operations, metadata, collections, overlays\n',
+                    'operations': 'operations:\n  # mass_genre_update: tmdb\n',
+                    'collections': 'collections:\n  # Define collection settings\n',
+                    'playlists': 'playlist_files:\n  # - pmm: playlist\n',
+                    'arr': 'radarr:\n  url: \n  token: \n\nsonarr:\n  url: \n  token: \n',
+                    'metadata': '# Metadata services\ntautulli:\n  url: \n  apikey: \n',
+                    'lists': 'trakt:\n  client_id: \n  client_secret: \n',
+                    'notifications': 'webhooks:\n  # error:\n  #   - url: \n',
+                    'mappers': '# ID Mappers\n# tmdb_id_mappings:\n#   12345: 67890\n',
+                    'metadata-editor': 'metadata:\n  # Metadata overrides\n',
+                    'advanced-ops': 'cache:\n  # Cache settings\n'
+                };
+                return templates[section] || `# ${section} section\n# Not yet configured\n`;
+            }
+
+            // Convert back to YAML
+            return jsyaml.dump(sectionData, {
+                indent: 2,
+                lineWidth: -1,
+                noRefs: true,
+                sortKeys: false
+            });
+        } catch (error) {
+            console.error('Error extracting section YAML:', error);
+            return `# Error parsing YAML\n# ${error.message}\n`;
+        }
+    },
+
+    mergeSectionYaml(sectionYaml) {
+        // Merge the edited section back into the full config
+        if (!elements.configEditor || typeof jsyaml === 'undefined') {
+            return false;
+        }
+
+        try {
+            const fullContent = elements.configEditor.value;
+            const fullParsed = jsyaml.load(fullContent) || {};
+            const sectionParsed = jsyaml.load(sectionYaml);
+
+            if (!sectionParsed || typeof sectionParsed !== 'object') {
+                return false;
+            }
+
+            // Get the keys for current section
+            const keys = this.sectionToYamlKeys[this.currentSection] || [];
+
+            // Remove old keys for this section and add new ones
+            for (const key of keys) {
+                delete fullParsed[key];
+            }
+
+            // Merge in the new section data
+            Object.assign(fullParsed, sectionParsed);
+
+            // Convert back to full YAML
+            const newFullContent = jsyaml.dump(fullParsed, {
+                indent: 2,
+                lineWidth: -1,
+                noRefs: true,
+                sortKeys: false
+            });
+
+            elements.configEditor.value = newFullContent;
+            return true;
+        } catch (error) {
+            console.error('Error merging section YAML:', error);
+            return false;
+        }
+    },
+
+    initYamlActions() {
+        // Copy button
+        const copyBtn = document.getElementById('btn-copy-yaml');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                const content = this.elements.yamlSplitEditor?.value || elements.configEditor?.value || '';
+                navigator.clipboard.writeText(content).then(() => {
+                    toast.success('YAML copied to clipboard');
+                }).catch(() => {
+                    toast.error('Failed to copy to clipboard');
+                });
+            });
+        }
+
+        // Format button
+        const formatBtn = document.getElementById('btn-format-yaml');
+        if (formatBtn) {
+            formatBtn.addEventListener('click', () => {
+                try {
+                    const content = this.elements.yamlSplitEditor?.value || '';
+                    if (typeof jsyaml !== 'undefined') {
+                        const parsed = jsyaml.load(content);
+                        const formatted = jsyaml.dump(parsed, { indent: 2, lineWidth: -1 });
+                        if (this.elements.yamlSplitEditor) {
+                            this.elements.yamlSplitEditor.value = formatted;
+                        }
+                        if (elements.configEditor) {
+                            elements.configEditor.value = formatted;
+                        }
+                        this.updateLineCount();
+                        this.updateSyncBadge('synced');
+                        toast.success('YAML formatted');
+                    }
+                } catch (error) {
+                    toast.error('Cannot format invalid YAML');
+                }
+            });
+        }
+    },
+
+    // Update compact status indicators
+    updateStatus(plex, tmdb) {
+        if (this.elements.headerPlexStatus) {
+            this.elements.headerPlexStatus.classList.toggle('connected', plex);
+            this.elements.headerPlexStatus.classList.toggle('error', !plex);
+        }
+        if (this.elements.headerTmdbStatus) {
+            this.elements.headerTmdbStatus.classList.toggle('connected', tmdb);
+            this.elements.headerTmdbStatus.classList.toggle('error', !tmdb);
+        }
+    }
+};
+
+// Initialize split view on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+    configSplitView.init();
+
+    // Initialize backups dropdown
+    const backupsBtn = document.getElementById('btn-backups-dropdown');
+    const backupsMenu = document.getElementById('backups-dropdown-menu');
+
+    if (backupsBtn && backupsMenu) {
+        backupsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = backupsMenu.classList.contains('open');
+            backupsMenu.classList.toggle('open', !isOpen);
+            backupsBtn.setAttribute('aria-expanded', !isOpen);
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!backupsMenu.contains(e.target) && !backupsBtn.contains(e.target)) {
+                backupsMenu.classList.remove('open');
+                backupsBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
+});
 
 // Make functions available globally for onclick handlers
 window.restoreBackup = restoreBackup;
