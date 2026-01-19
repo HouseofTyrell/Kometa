@@ -4,6 +4,7 @@ import { stringify, parse } from 'yaml';
 import { Card, Button, Badge, Modal, Input, Select, Checkbox } from '@/components/common';
 import { YamlHighlight } from '@/components/common';
 import FormField from '@/components/config/FormField.vue';
+import CollectionTemplates from '@/components/CollectionTemplates.vue';
 import { useToast } from '@/composables';
 
 const toast = useToast();
@@ -33,6 +34,7 @@ const activeFileIndex = ref<number | null>(null);
 const showNewFileModal = ref(false);
 const showAddCollectionModal = ref(false);
 const showAddOverlayModal = ref(false);
+const showTemplatesPanel = ref(false);
 const viewMode = ref<'gui' | 'yaml' | 'split'>('split');
 
 // New file form
@@ -520,6 +522,56 @@ function removeCollection(name: string) {
   activeFile.value.isDirty = true;
 }
 
+// Handle template selection
+interface CollectionTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+  yaml: string;
+  tags: string[];
+}
+
+function handleTemplateSelect(template: CollectionTemplate) {
+  // Parse the template YAML
+  try {
+    const parsed = parse(template.yaml);
+    if (!parsed?.collections) {
+      toast.error('Invalid template format');
+      return;
+    }
+
+    // If no active file, create one
+    if (!activeFile.value) {
+      const newFile: CollectionFileData = {
+        name: 'collections.yml',
+        type: 'collection',
+        content: { collections: {} },
+        isDirty: true,
+      };
+      files.value.push(newFile);
+      activeFileIndex.value = files.value.length - 1;
+    }
+
+    // Merge template collections into active file
+    if (!activeFile.value!.content.collections) {
+      activeFile.value!.content.collections = {};
+    }
+
+    // Add all collections from template
+    for (const [name, def] of Object.entries(parsed.collections)) {
+      activeFile.value!.content.collections[name] = def as CollectionDefinition;
+    }
+
+    activeFile.value!.isDirty = true;
+    showTemplatesPanel.value = false;
+    toast.success(`Added "${template.name}" template`);
+  } catch (err) {
+    toast.error('Failed to parse template');
+  }
+}
+
 function addOverlay() {
   if (!activeFile.value || !newOverlayName.value.trim()) return;
 
@@ -625,6 +677,16 @@ function handleYamlEdit(content: string) {
           </p>
         </div>
         <div class="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            @click="showTemplatesPanel = !showTemplatesPanel"
+            :class="{ 'bg-kometa-gold/20 text-kometa-gold': showTemplatesPanel }"
+          >
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            Templates
+          </Button>
           <Button variant="secondary" @click="showNewFileModal = true">
             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -633,6 +695,14 @@ function handleYamlEdit(content: string) {
           </Button>
         </div>
       </div>
+    </div>
+
+    <!-- Templates Panel (when visible) -->
+    <div
+      v-if="showTemplatesPanel"
+      class="border-b border-border bg-surface-secondary p-4 max-h-96 overflow-auto"
+    >
+      <CollectionTemplates @select="handleTemplateSelect" />
     </div>
 
     <!-- Main Content -->

@@ -94,7 +94,10 @@ class ConfigManager:
         }
 
     def validate_yaml(self, content: str) -> Dict[str, Any]:
-        """Validate YAML content without saving."""
+        """Validate YAML content without saving.
+
+        Returns detailed, user-friendly error messages with guidance on how to fix issues.
+        """
         errors = []
         warnings = []
 
@@ -102,7 +105,11 @@ class ConfigManager:
         if not content or not content.strip():
             return {
                 "valid": False,
-                "errors": ["Config is empty"],
+                "errors": [{
+                    "field": "config",
+                    "message": "Configuration is empty",
+                    "suggestion": "Add at least plex, tmdb, and libraries sections to your config"
+                }],
                 "warnings": []
             }
 
@@ -111,16 +118,40 @@ class ConfigManager:
             from io import StringIO
             parsed = self.yaml.load(StringIO(content))
         except YAMLError as e:
+            # Extract line number and helpful context from YAML error
+            error_str = str(e)
+            line_num = None
+            column = None
+
+            # Try to extract line number from ruamel.yaml error
+            if hasattr(e, 'problem_mark') and e.problem_mark:
+                line_num = e.problem_mark.line + 1
+                column = e.problem_mark.column + 1
+
+            error_detail = {
+                "field": "yaml_syntax",
+                "message": f"YAML syntax error: {error_str}",
+                "suggestion": "Check for incorrect indentation, missing colons, or unquoted special characters"
+            }
+            if line_num:
+                error_detail["line"] = line_num
+                error_detail["column"] = column
+                error_detail["message"] = f"YAML syntax error on line {line_num}: {error_str}"
+
             return {
                 "valid": False,
-                "errors": [f"YAML syntax error: {str(e)}"],
+                "errors": [error_detail],
                 "warnings": []
             }
 
         if parsed is None:
             return {
                 "valid": False,
-                "errors": ["Config is empty or invalid"],
+                "errors": [{
+                    "field": "config",
+                    "message": "Configuration is empty or contains only comments",
+                    "suggestion": "Add configuration sections: plex, tmdb, and libraries"
+                }],
                 "warnings": []
             }
 
@@ -128,32 +159,66 @@ class ConfigManager:
         if not isinstance(parsed, dict):
             return {
                 "valid": False,
-                "errors": ["Config must be a YAML mapping (dictionary)"],
+                "errors": [{
+                    "field": "config",
+                    "message": "Config must be a YAML mapping (dictionary)",
+                    "suggestion": "Start your config with a section name like 'plex:' followed by indented settings"
+                }],
                 "warnings": []
             }
 
-        # Check for required sections
-        if "libraries" not in parsed:
-            warnings.append("No 'libraries' section found - Kometa won't process any libraries")
-
-        # Validate plex section if present
-        if "plex" in parsed:
+        # Check for required sections - plex is required
+        if "plex" not in parsed:
+            errors.append({
+                "field": "plex",
+                "message": "Missing required 'plex' section",
+                "suggestion": "Add a plex section with url and token:\n  plex:\n    url: http://YOUR_PLEX_IP:32400\n    token: YOUR_PLEX_TOKEN"
+            })
+        else:
             plex = parsed["plex"]
             if isinstance(plex, dict):
-                if "url" not in plex:
-                    errors.append("plex.url is required")
-                if "token" not in plex:
-                    errors.append("plex.token is required")
-        else:
-            warnings.append("No 'plex' section found")
+                if "url" not in plex or not plex.get("url"):
+                    errors.append({
+                        "field": "plex.url",
+                        "message": "Plex URL is required",
+                        "suggestion": "Add your Plex server URL (e.g., http://192.168.1.100:32400)"
+                    })
+                elif not str(plex.get("url", "")).startswith(("http://", "https://")):
+                    errors.append({
+                        "field": "plex.url",
+                        "message": "Plex URL must start with http:// or https://",
+                        "suggestion": f"Change '{plex.get('url')}' to include the protocol (e.g., http://{plex.get('url')})"
+                    })
+                if "token" not in plex or not plex.get("token"):
+                    errors.append({
+                        "field": "plex.token",
+                        "message": "Plex token is required",
+                        "suggestion": "Add your X-Plex-Token. Find it at: https://support.plex.tv/articles/204059436"
+                    })
+            elif plex is not None:
+                errors.append({
+                    "field": "plex",
+                    "message": "Plex section must contain configuration settings",
+                    "suggestion": "Add url and token settings under the plex section"
+                })
 
-        # Validate libraries section
-        if "libraries" in parsed and parsed["libraries"]:
+        # Check libraries section
+        if "libraries" not in parsed:
+            warnings.append({
+                "field": "libraries",
+                "message": "No 'libraries' section found",
+                "suggestion": "Add a libraries section to specify which Plex libraries to manage"
+            })
+        elif parsed["libraries"]:
             libraries = parsed["libraries"]
             if isinstance(libraries, dict):
                 for lib_name, lib_config in libraries.items():
                     if lib_config is None:
-                        warnings.append(f"Library '{lib_name}' has no configuration")
+                        warnings.append({
+                            "field": f"libraries.{lib_name}",
+                            "message": f"Library '{lib_name}' has no configuration",
+                            "suggestion": f"Add collection_files, overlay_files, or operations under '{lib_name}'"
+                        })
                     elif isinstance(lib_config, dict):
                         # Check for at least one content file
                         has_content = any(
@@ -161,14 +226,43 @@ class ConfigManager:
                             for key in ["collection_files", "metadata_files", "overlay_files", "operations"]
                         )
                         if not has_content:
-                            warnings.append(f"Library '{lib_name}' has no collection, metadata, or overlay files")
+                            warnings.append({
+                                "field": f"libraries.{lib_name}",
+                                "message": f"Library '{lib_name}' has no collection, metadata, or overlay files",
+                                "suggestion": f"Add at least one of: collection_files, overlay_files, metadata_files, or operations"
+                            })
 
         # Validate TMDb if present
         if "tmdb" in parsed:
             tmdb = parsed["tmdb"]
             if isinstance(tmdb, dict):
-                if "apikey" not in tmdb:
-                    warnings.append("tmdb.apikey not set - TMDb features will be limited")
+                if "apikey" not in tmdb or not tmdb.get("apikey"):
+                    warnings.append({
+                        "field": "tmdb.apikey",
+                        "message": "TMDb API key not set",
+                        "suggestion": "Get a free API key at https://www.themoviedb.org/settings/api"
+                    })
+        else:
+            warnings.append({
+                "field": "tmdb",
+                "message": "No 'tmdb' section found",
+                "suggestion": "Add tmdb section with your API key for metadata and collection features"
+            })
+
+        # Check for common typos in section names
+        known_sections = {"plex", "tmdb", "tautulli", "radarr", "sonarr", "trakt",
+                         "mal", "anidb", "libraries", "settings", "webhooks",
+                         "notifiarr", "gotify", "ntfy", "omdb", "mdblist", "github"}
+        for key in parsed.keys():
+            if key.lower() not in known_sections and key.lower() != key:
+                # Might be a typo
+                for known in known_sections:
+                    if key.lower() == known.lower() and key != known:
+                        warnings.append({
+                            "field": key,
+                            "message": f"Section '{key}' might be a typo",
+                            "suggestion": f"Did you mean '{known}'? Section names are case-sensitive."
+                        })
 
         return {
             "valid": len(errors) == 0,

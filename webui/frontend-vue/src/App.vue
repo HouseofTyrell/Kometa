@@ -1,20 +1,69 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useUIStore, useRunStore } from '@/stores';
-import { useRunStatus } from '@/api';
+import { ref, computed, watch } from 'vue';
+import { useUIStore, useRunStore, useConfigStore } from '@/stores';
+import { useRunStatus, useConfig } from '@/api';
 import TheHeader from '@/components/layout/TheHeader.vue';
 import TheSidebar from '@/components/layout/TheSidebar.vue';
 import MainContent from '@/components/layout/MainContent.vue';
+import SetupWizard from '@/components/SetupWizard.vue';
 import { ToastContainer, ConfirmDialog } from '@/components/common';
 
 const ui = useUIStore();
 const run = useRunStore();
+const configStore = useConfigStore();
 
 // Fetch run status on mount and poll while running
 const { data: runStatus } = useRunStatus();
 
+// Fetch config on mount
+const { data: configData, isLoading: configLoading } = useConfig();
+
+// Update config store when data loads
+watch(configData, (data) => {
+  if (data) {
+    configStore.setRawConfig(data.content, false);
+    if (data.parsed) {
+      configStore.setParsedConfig(data.parsed);
+    }
+  }
+});
+
 // Update run store when status changes
 const isRunning = computed(() => runStatus.value?.is_running ?? false);
+
+// Setup wizard state
+const showSetupWizard = ref(false);
+const setupSkipped = ref(false);
+
+// Check if setup is needed (no plex or tmdb configured)
+const needsSetup = computed(() => {
+  if (configLoading.value || setupSkipped.value) return false;
+
+  const parsed = configStore.parsedConfig;
+  if (!parsed) return true;
+
+  // Check for required config sections
+  const hasPlex = parsed.plex?.url && parsed.plex?.token;
+  const hasTmdb = parsed.tmdb?.apikey;
+
+  return !hasPlex || !hasTmdb;
+});
+
+// Show wizard when setup is needed
+watch(needsSetup, (needs) => {
+  if (needs && !setupSkipped.value) {
+    showSetupWizard.value = true;
+  }
+}, { immediate: true });
+
+function handleSetupComplete() {
+  showSetupWizard.value = false;
+}
+
+function handleSetupSkip() {
+  setupSkipped.value = true;
+  showSetupWizard.value = false;
+}
 </script>
 
 <template>
@@ -58,5 +107,12 @@ const isRunning = computed(() => runStatus.value?.is_running ?? false);
 
     <!-- Confirm Dialog -->
     <ConfirmDialog />
+
+    <!-- Setup Wizard -->
+    <SetupWizard
+      v-if="showSetupWizard"
+      @complete="handleSetupComplete"
+      @skip="handleSetupSkip"
+    />
   </div>
 </template>

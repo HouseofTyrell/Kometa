@@ -4,7 +4,7 @@ import { useConfigStore } from '@/stores';
 import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups, useRestoreBackup, useTestConnection } from '@/api';
 import { useToast, useConfirm } from '@/composables';
 import { Card, Button, Badge, Spinner, Modal } from '@/components/common';
-import { ConfigEditor } from '@/components/config';
+import { ConfigEditor, ValidationPanel } from '@/components/config';
 
 const config = useConfigStore();
 const toast = useToast();
@@ -23,6 +23,9 @@ const testConnectionMutation = useTestConnection();
 // Backups
 const { data: backups, refetch: refetchBackups } = useConfigBackups();
 const showBackupsModal = ref(false);
+
+// Validation panel
+const showValidation = ref(true);
 
 // File input ref
 const fileInputRef = ref<HTMLInputElement | null>(null);
@@ -494,9 +497,56 @@ const handleTestConnection = async (service: string, config: Record<string, unkn
       </div>
     </Card>
 
+    <!-- Validation Panel (collapsible) -->
+    <div
+      v-if="!isLoading && !error && (config.hasErrors || config.hasWarnings)"
+      class="border-b border-border"
+    >
+      <button
+        class="w-full flex items-center justify-between p-3 hover:bg-surface-hover transition-colors"
+        @click="showValidation = !showValidation"
+      >
+        <div class="flex items-center gap-2">
+          <svg
+            class="w-4 h-4 transition-transform"
+            :class="{ 'rotate-90': showValidation }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+          <span class="font-medium text-sm">Validation Issues</span>
+          <Badge v-if="config.hasErrors" variant="error" size="sm">
+            {{ config.validation.errors.length }}
+          </Badge>
+          <Badge v-if="config.hasWarnings" variant="warning" size="sm">
+            {{ config.validation.warnings.length }}
+          </Badge>
+        </div>
+        <span class="text-xs text-content-muted">
+          {{ showValidation ? 'Click to hide' : 'Click to show details' }}
+        </span>
+      </button>
+      <div
+        v-if="showValidation"
+        class="p-4 bg-surface-secondary max-h-64 overflow-auto"
+      >
+        <ValidationPanel />
+      </div>
+    </div>
+
     <!-- Config Editor with GUI/YAML split view -->
     <ConfigEditor
-      v-else
+      v-else-if="!isLoading && !error"
+      v-model="editorContent"
+      class="flex-1 min-h-0"
+      @test-connection="handleTestConnection"
+    />
+
+    <!-- Config Editor (when validation panel is visible) -->
+    <ConfigEditor
+      v-if="!isLoading && !error && (config.hasErrors || config.hasWarnings)"
       v-model="editorContent"
       class="flex-1 min-h-0"
       @test-connection="handleTestConnection"
