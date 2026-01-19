@@ -3,3 +3,4 @@ export { useTheme } from './useTheme';
 export { useToast } from './useToast';
 export { useConfirm } from './useConfirm';
 export { useUndoRedo } from './useUndoRedo';
+export { useConfigSection } from './useConfigSection';

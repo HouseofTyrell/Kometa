@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { stringify, parse } from 'yaml';
 import { Card, Button, Badge, Modal, Input, Select, Checkbox } from '@/components/common';
 import { YamlHighlight } from '@/components/common';
@@ -7,6 +7,25 @@ import FormField from '@/components/config/FormField.vue';
 import { useToast } from '@/composables';
 
 const toast = useToast();
+
+// Unsaved changes warning
+const hasUnsavedChanges = computed(() => files.value.some(f => f.isDirty));
+
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  if (hasUnsavedChanges.value) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+    return e.returnValue;
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload);
+});
 
 // File management state
 const files = ref<CollectionFileData[]>([]);

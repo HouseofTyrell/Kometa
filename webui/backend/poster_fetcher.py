@@ -7,6 +7,7 @@ Fetches posters from Plex and TMDb for overlay preview without running the full 
 import os
 import re
 import base64
+import logging
 import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -14,6 +15,8 @@ from io import BytesIO
 
 import requests
 from ruamel.yaml import YAML
+
+logger = logging.getLogger(__name__)
 
 try:
     from PIL import Image
@@ -58,7 +61,7 @@ class PosterFetcher:
                     self._tmdb_api_key = tmdb_config.get("apikey")
 
         except Exception as e:
-            print(f"Warning: Failed to load config: {e}")
+            logger.warning("Failed to load config: %s", e)
 
     @property
     def has_plex(self) -> bool:
@@ -146,7 +149,7 @@ class PosterFetcher:
                     break
 
         except Exception as e:
-            print(f"Plex search error: {e}")
+            logger.error("Plex search error: %s", e)
 
         return results
 
@@ -184,7 +187,7 @@ class PosterFetcher:
                     })
 
         except Exception as e:
-            print(f"Failed to get Plex libraries: {e}")
+            logger.error("Failed to get Plex libraries: %s", e)
 
         return libraries
 
@@ -210,7 +213,7 @@ class PosterFetcher:
                 return int(total_size)
 
         except Exception as e:
-            print(f"Failed to get library count for {library_key}: {e}")
+            logger.debug("Failed to get library count for %s: %s", library_key, e)
 
         return None
 
@@ -241,7 +244,7 @@ class PosterFetcher:
                 return f"{self._plex_url}{thumb}?X-Plex-Token={self._plex_token}"
 
         except Exception as e:
-            print(f"Failed to get Plex poster URL: {e}")
+            logger.error("Failed to get Plex poster URL: %s", e)
 
         return None
 
@@ -303,7 +306,7 @@ class PosterFetcher:
             return metadata
 
         except Exception as e:
-            print(f"Failed to get Plex item metadata: {e}")
+            logger.error("Failed to get Plex item metadata: %s", e)
             return None
 
     def fetch_poster_image(
@@ -362,7 +365,7 @@ class PosterFetcher:
             return image_data
 
         except Exception as e:
-            print(f"Failed to fetch poster image: {e}")
+            logger.error("Failed to fetch poster image: %s", e)
             return None
 
     def fetch_poster_base64(
@@ -400,7 +403,7 @@ class PosterFetcher:
                 return f"https://image.tmdb.org/t/p/w500{poster_path}"
 
         except Exception as e:
-            print(f"TMDb API error: {e}")
+            logger.error("TMDb API error: %s", e)
 
         return None
 
@@ -440,7 +443,7 @@ class PosterFetcher:
                 results.append(result)
 
         except Exception as e:
-            print(f"TMDb search error: {e}")
+            logger.error("TMDb search error: %s", e)
 
         return results
 
@@ -484,6 +487,6 @@ class PosterFetcher:
                 results.append(result)
 
         except Exception as e:
-            print(f"Failed to get recent items: {e}")
+            logger.error("Failed to get recent items: %s", e)
 
         return results

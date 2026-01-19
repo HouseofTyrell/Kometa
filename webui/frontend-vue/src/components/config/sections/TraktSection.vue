@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import FormField from '../FormField.vue';
+import SectionHeader from '../SectionHeader.vue';
 import { Input, Checkbox } from '@/components/common';
+import { useConfigSection } from '@/composables';
 
 interface TraktConfig {
   client_id?: string;
@@ -27,9 +29,7 @@ const emit = defineEmits<{
   (e: 'authenticate'): void;
 }>();
 
-function updateField<K extends keyof TraktConfig>(field: K, value: TraktConfig[K]) {
-  emit('update:modelValue', { ...props.modelValue, [field]: value });
-}
+const { updateField } = useConfigSection<TraktConfig>(props, emit);
 
 const isAuthorized = computed(() => !!props.modelValue.authorization?.access_token);
 </script>
@@ -37,29 +37,13 @@ const isAuthorized = computed(() => !!props.modelValue.authorization?.access_tok
 <template>
   <div class="space-y-6">
     <!-- Header -->
-    <div class="flex items-start justify-between">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="text-2xl">📋</span>
-          <h3 class="text-lg font-semibold">Trakt Configuration</h3>
-          <span class="text-xs px-2 py-0.5 rounded bg-surface-tertiary text-content-muted font-medium">Optional</span>
-        </div>
-        <p class="mt-1 text-sm text-content-secondary">
-          Connect Trakt for user lists, watched status, and collection builders.
-        </p>
-      </div>
-      <a
-        href="https://kometa.wiki/en/latest/config/trakt/"
-        target="_blank"
-        class="flex items-center gap-1 text-sm text-kometa-gold hover:underline"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-        </svg>
-        Documentation
-      </a>
-    </div>
+    <SectionHeader
+      icon="📋"
+      title="Trakt Configuration"
+      description="Connect Trakt for user lists, watched status, and collection builders."
+      docs-url="https://kometa.wiki/en/latest/config/trakt/"
+      optional
+    />
 
     <!-- Authorization Status -->
     <div

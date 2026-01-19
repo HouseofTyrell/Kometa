@@ -7,6 +7,7 @@ A safe, read-only by default web interface for Kometa.
 import os
 import json
 import asyncio
+import logging
 import subprocess
 import signal
 from datetime import datetime
@@ -15,6 +16,8 @@ from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+
+logger = logging.getLogger(__name__)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
@@ -482,29 +485,63 @@ async def get_run_logs(run_id: str, tail: int = 1000):
 async def websocket_logs(websocket: WebSocket):
     """WebSocket endpoint for streaming live logs."""
     await websocket.accept()
+    logger.info("WebSocket logs client connected")
 
     try:
         # Subscribe to log updates
         async for log_line in run_manager.stream_logs():
-            await websocket.send_json({"type": "log", "data": log_line})
+            try:
+                await websocket.send_json({"type": "log", "data": log_line})
+            except WebSocketDisconnect:
+                logger.info("WebSocket logs client disconnected during send")
+                break
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket logs client disconnected")
     except Exception as e:
-        await websocket.send_json({"type": "error", "data": str(e)})
+        logger.error("WebSocket logs error: %s", e)
+        try:
+            await websocket.send_json({"type": "error", "data": str(e)})
+        except Exception:
+            pass  # Client likely disconnected
 
 
 @app.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
-    """WebSocket endpoint for run status updates."""
+    """WebSocket endpoint for run status updates with heartbeat."""
     await websocket.accept()
+    logger.info("WebSocket status client connected")
+
+    heartbeat_interval = 30  # Send heartbeat every 30 seconds
+    status_interval = 2  # Send status every 2 seconds
+    last_heartbeat = asyncio.get_event_loop().time()
 
     try:
         while True:
-            status = await run_manager.get_status()
-            await websocket.send_json(status)
-            await asyncio.sleep(2)  # Update every 2 seconds
+            current_time = asyncio.get_event_loop().time()
+
+            # Send heartbeat if needed
+            if current_time - last_heartbeat >= heartbeat_interval:
+                try:
+                    await websocket.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat()})
+                    last_heartbeat = current_time
+                except WebSocketDisconnect:
+                    logger.info("WebSocket status client disconnected during heartbeat")
+                    break
+
+            # Send status update
+            try:
+                status = await run_manager.get_status()
+                status["type"] = "status"
+                await websocket.send_json(status)
+            except WebSocketDisconnect:
+                logger.info("WebSocket status client disconnected during status send")
+                break
+
+            await asyncio.sleep(status_interval)
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket status client disconnected")
+    except Exception as e:
+        logger.error("WebSocket status error: %s", e)
 
 
 # ============================================================================
@@ -613,8 +650,8 @@ async def generate_overlay_preview(request: OverlayPreviewRequest):
             import os
             try:
                 os.unlink(sample_poster)
-            except:
-                pass
+            except OSError:
+                pass  # File already deleted or inaccessible
 
         return result
     except Exception as e:
@@ -1294,7 +1331,7 @@ async def test_webhook(request: WebhookTestRequest):
         return {"success": False, "error": str(e)}
 
 
-# --- Metadata Editor ---
+# --- Metadata Browser ---
 
 @app.get("/api/metadata/browse/{library}")
 async def browse_metadata(
@@ -1306,33 +1343,102 @@ async def browse_metadata(
     sort: str = "title"
 ):
     """
-    Browse media items in a library for metadata editing.
+    Browse media items in a library for metadata viewing.
 
-    TODO: Connect to Plex API to fetch real library contents.
-    Currently returns a stub response.
+    Uses the PosterFetcher to query the Plex API for library contents.
+    Note: This is read-only - metadata editing should be done in Plex directly.
     """
-    # Stub: Return placeholder data
-    # Real implementation should query Plex API
-    return {
-        "items": [],
-        "total": 0,
-        "page": page,
-        "total_pages": 0,
-        "message": "TODO: Connect to Plex API - see docs/API_INTEGRATION.md"
-    }
+    if not poster_fetcher or not poster_fetcher.has_plex:
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "total_pages": 0,
+            "error": "Plex not configured. Add Plex credentials to config.yml."
+        }
+
+    try:
+        # If search is provided, use search functionality
+        if search:
+            items = poster_fetcher.search_plex(search, library=library, limit=per_page)
+            return {
+                "items": items,
+                "total": len(items),
+                "page": 1,
+                "total_pages": 1,
+                "search": search
+            }
+
+        # Otherwise, get recent items from the library
+        # Find the library key from the library name
+        libraries = poster_fetcher.get_plex_libraries()
+        library_key = None
+        for lib in libraries:
+            if lib["title"].lower() == library.lower() or lib["key"] == library:
+                library_key = lib["key"]
+                break
+
+        if not library_key:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "error": f"Library '{library}' not found"
+            }
+
+        items = poster_fetcher.get_recent_items(library_key, limit=per_page)
+        return {
+            "items": items,
+            "total": len(items),
+            "page": page,
+            "total_pages": 1
+        }
+
+    except Exception as e:
+        logger.error("Failed to browse metadata: %s", e)
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "total_pages": 0,
+            "error": str(e)
+        }
 
 
 @app.get("/api/metadata/item/{item_id}")
 async def get_metadata_item(item_id: str):
     """
-    Get full metadata for a specific item.
+    Get full metadata for a specific Plex item.
 
-    TODO: Connect to Plex API to fetch item details.
+    Uses PosterFetcher to retrieve detailed metadata from Plex.
     """
-    return {
-        "id": item_id,
-        "message": "TODO: Connect to Plex API - see docs/API_INTEGRATION.md"
-    }
+    if not poster_fetcher or not poster_fetcher.has_plex:
+        raise HTTPException(
+            status_code=503,
+            detail="Plex not configured. Add Plex credentials to config.yml."
+        )
+
+    try:
+        metadata = poster_fetcher.get_plex_item_metadata(item_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        # Add poster URL
+        poster_url = poster_fetcher.get_plex_poster_url(item_id)
+        if poster_url:
+            metadata["poster_url"] = poster_url
+
+        return {
+            "id": item_id,
+            "metadata": metadata
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get metadata item: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/metadata/item/{item_id}")
@@ -1340,23 +1446,81 @@ async def update_metadata_item(item_id: str, request: MetadataEditRequest):
     """
     Update metadata for a specific item.
 
-    TODO: Connect to Plex API to update item metadata.
+    Note: Direct Plex metadata editing via API is limited. This endpoint
+    returns guidance on how to edit metadata properly through Kometa's
+    metadata files or Plex directly.
     """
     return {
-        "success": True,
-        "message": "TODO: Implement Plex metadata update - see docs/API_INTEGRATION.md"
+        "success": False,
+        "message": "Direct metadata editing is not supported via the Web UI for safety reasons. "
+                   "To edit metadata, use Kometa metadata files (metadata.yml) or edit directly in Plex. "
+                   "See: https://kometa.wiki/en/latest/files/metadata/"
     }
 
 
 @app.post("/api/metadata/generate-yaml")
 async def generate_metadata_yaml(items: List[Dict[str, Any]]):
     """
-    Generate YAML for metadata edits.
+    Generate Kometa metadata YAML from provided items.
 
-    TODO: Generate valid Kometa metadata YAML.
+    Accepts a list of items with title, year, and optional metadata fields.
+    Returns valid Kometa metadata.yml format.
     """
-    # Stub implementation
-    yaml_output = "metadata:\n  # Generated metadata will appear here\n"
+    from io import StringIO
+    from ruamel.yaml import YAML
+
+    if not items:
+        return {"yaml": "metadata:\n  # Add items to generate metadata YAML\n"}
+
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+
+    metadata_dict = {"metadata": {}}
+
+    for item in items:
+        title = item.get("title", "Unknown Title")
+        year = item.get("year")
+
+        # Create the item key (title or title (year))
+        item_key = f"{title} ({year})" if year else title
+
+        # Build the metadata entry
+        entry = {}
+
+        # Add optional fields if provided
+        if item.get("sort_title"):
+            entry["sort_title"] = item["sort_title"]
+        if item.get("content_rating"):
+            entry["content_rating"] = item["content_rating"]
+        if item.get("critic_rating"):
+            entry["critic_rating"] = item["critic_rating"]
+        if item.get("audience_rating"):
+            entry["audience_rating"] = item["audience_rating"]
+        if item.get("originally_available"):
+            entry["originally_available"] = item["originally_available"]
+        if item.get("studio"):
+            entry["studio"] = item["studio"]
+        if item.get("tagline"):
+            entry["tagline"] = item["tagline"]
+        if item.get("summary"):
+            entry["summary"] = item["summary"]
+        if item.get("genres"):
+            entry["genre"] = item["genres"]
+        if item.get("labels"):
+            entry["label"] = item["labels"]
+
+        # If no optional fields, add a comment placeholder
+        if not entry:
+            entry["# Add metadata fields"] = None
+
+        metadata_dict["metadata"][item_key] = entry
+
+    # Convert to YAML string
+    stream = StringIO()
+    yaml.dump(metadata_dict, stream)
+    yaml_output = stream.getvalue()
+
     return {"yaml": yaml_output}
 
 

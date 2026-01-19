@@ -227,18 +227,48 @@ const getConnectionResult = (serviceId: string) => {
         </div>
       </Card>
 
-      <!-- Password -->
+      <!-- Security Info -->
       <Card title="Security">
         <div class="space-y-4">
-          <Input
-            type="password"
-            label="UI Password"
-            placeholder="Enter password..."
-            hint="Set a password to protect the Web UI"
-          />
-          <Button variant="secondary">
-            Update Password
-          </Button>
+          <div class="flex items-start gap-3">
+            <svg
+              class="w-5 h-5 text-info flex-shrink-0 mt-0.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+            <div>
+              <p class="font-medium text-content-primary">Password Protection</p>
+              <p class="text-sm text-content-secondary mt-1">
+                UI password is configured via the <code class="px-1.5 py-0.5 rounded bg-surface-tertiary font-mono text-xs">KOMETA_UI_PASSWORD</code> environment variable for security.
+              </p>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-lg bg-surface-tertiary">
+            <p class="text-sm text-content-secondary">
+              <strong>Current Status:</strong>
+              <Badge
+                :variant="settings?.password_required ? 'success' : 'warning'"
+                class="ml-2"
+              >
+                {{ settings?.password_required ? 'Protected' : 'Not Set' }}
+              </Badge>
+            </p>
+            <p
+              v-if="!settings?.password_required"
+              class="text-xs text-content-muted mt-2"
+            >
+              To enable password protection, set the environment variable when starting the container.
+            </p>
+          </div>
         </div>
       </Card>
 
