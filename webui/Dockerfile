@@ -15,9 +15,9 @@ WORKDIR /app/frontend
 COPY frontend-vue/package*.json ./
 RUN npm install
 
-# Copy source and build
+# Copy source and build (skip type-check for faster builds, run in CI separately)
 COPY frontend-vue/ ./
-RUN npm run build
+RUN npm run build:only
 
 
 # ===========================================
