@@ -57,7 +57,10 @@ export function useValidateConfig() {
 export function useConfigBackups() {
   return useQuery({
     queryKey: configKeys.backups(),
-    queryFn: () => api.get<BackupInfo[]>('/config/backups'),
+    queryFn: async () => {
+      const response = await api.get<{ backups: BackupInfo[] }>('/config/backups');
+      return response.backups || [];
+    },
   });
 }
 
@@ -81,7 +84,7 @@ export function useSaveConfig() {
 
   return useMutation({
     mutationFn: (content: string) =>
-      api.put<{ success: boolean; message: string }>('/config', { content }),
+      api.post<{ success: boolean; message: string }>('/config', { content }),
     onSuccess: () => {
       // Invalidate config queries to refetch fresh data
       queryClient.invalidateQueries({ queryKey: configKeys.all });
@@ -112,9 +115,7 @@ export function useRestoreBackup() {
 
   return useMutation({
     mutationFn: (filename: string) =>
-      api.post<{ success: boolean; message: string }>('/config/restore', {
-        filename,
-      }),
+      api.post<{ success: boolean; message: string }>(`/config/restore/${encodeURIComponent(filename)}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: configKeys.all });
     },

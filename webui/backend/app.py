@@ -185,26 +185,6 @@ npm run build</pre>
         )
 
 
-# Catch-all route for Vue SPA client-side routing
-@app.get("/{full_path:path}")
-async def serve_spa(request: Request, full_path: str):
-    """Serve Vue SPA for all non-API routes (client-side routing support)."""
-    # Skip API and WebSocket routes
-    if full_path.startswith(("api/", "ws/", "static/", "assets/", "overlay-images/")):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    if UI_MODE == "vue" and vue_available:
-        # Check if it's a static file
-        file_path = vue_frontend_dir / full_path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(file_path)
-        # Otherwise return index.html for client-side routing
-        return FileResponse(vue_frontend_dir / "index.html")
-    else:
-        # Legacy mode or no frontend - 404 for unknown routes
-        raise HTTPException(status_code=404, detail="Not found")
-
-
 # ============================================================================
 # Health Check
 # ============================================================================
@@ -1577,6 +1557,34 @@ async def save_operations_config(request: OperationsConfigRequest, library: str 
         return {"success": True, "message": "Operations settings saved"}
     else:
         raise HTTPException(status_code=500, detail="Failed to save operations settings")
+
+
+# ============================================================================
+# Catch-all Route for Vue SPA (MUST be last)
+# ============================================================================
+
+@app.get("/{full_path:path}")
+async def serve_spa(request: Request, full_path: str):
+    """
+    Serve Vue SPA for all non-API routes (client-side routing support).
+
+    IMPORTANT: This route MUST be defined last, after all API routes,
+    otherwise it will capture API requests before they reach their handlers.
+    """
+    # Skip API and WebSocket routes - they should have been handled above
+    if full_path.startswith(("api/", "ws/", "static/", "assets/", "overlay-images/")):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if UI_MODE == "vue" and vue_available:
+        # Check if it's a static file
+        file_path = vue_frontend_dir / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise return index.html for client-side routing
+        return FileResponse(vue_frontend_dir / "index.html")
+    else:
+        # Legacy mode or no frontend - 404 for unknown routes
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 # ============================================================================

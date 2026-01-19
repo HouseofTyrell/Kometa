@@ -39,8 +39,8 @@ interface RunStatusResponse {
 export function useRunHistory(filters: RunFilters = {}) {
   return useQuery({
     queryKey: runKeys.list(filters),
-    queryFn: () =>
-      api.get<RunHistoryResponse>('/runs', {
+    queryFn: async () => {
+      const response = await api.get<RunHistoryResponse>('/runs', {
         params: {
           status: filters.status,
           dry_run: filters.dryRun,
@@ -50,7 +50,10 @@ export function useRunHistory(filters: RunFilters = {}) {
           limit: filters.limit || 50,
           offset: filters.offset || 0,
         },
-      }),
+      });
+      // Return just the runs array for easier consumption
+      return response.runs || [];
+    },
   });
 }
 
@@ -146,7 +149,8 @@ export function useStopRun() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () => api.post<{ success: boolean; message: string }>('/run/stop'),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mutationFn: (_runId?: string) => api.post<{ success: boolean; message: string }>('/run/stop'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: runKeys.status() });
       queryClient.invalidateQueries({ queryKey: runKeys.lists() });

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useUIStore, useConfigStore, useRunStore } from '@/stores';
-import { useTestAllConnections, useRunHistory, useValidateConfig, useCreateBackup } from '@/api';
+import { useRunHistory, useValidateConfig, useCreateBackup, useSettings } from '@/api';
 import { useToast } from '@/composables';
 import { Card, Button, Badge, Spinner } from '@/components/common';
 import type { TabId } from '@/types';
@@ -13,13 +13,9 @@ const toast = useToast();
 
 // API hooks
 const { data: history } = useRunHistory();
+const { data: settings } = useSettings();
 const validateMutation = useValidateConfig();
 const createBackupMutation = useCreateBackup();
-const testConnectionsMutation = useTestAllConnections();
-
-// Connection status
-const connectionStatus = computed(() => testConnectionsMutation.data.value);
-const isTestingConnections = computed(() => testConnectionsMutation.isPending.value);
 
 // Recent activity from run history
 const recentRuns = computed(() => {
@@ -91,16 +87,6 @@ async function handleBackup() {
     toast.success(`Backup created: ${result.filename}`);
   } catch (err) {
     toast.error('Failed to create backup');
-  }
-}
-
-// Test connections
-async function handleTestConnections() {
-  try {
-    await testConnectionsMutation.mutateAsync();
-    toast.success('Connection tests complete');
-  } catch (err) {
-    toast.error('Connection tests failed');
   }
 }
 
@@ -190,55 +176,42 @@ function getStatusVariant(status: string): 'success' | 'error' | 'warning' | 'de
       </div>
     </Card>
 
-    <!-- Connection Status -->
+    <!-- System Status -->
     <Card>
       <template #header>
-        <div class="flex items-center justify-between w-full">
-          <span class="font-medium">Connection Status</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            :loading="isTestingConnections"
-            @click="handleTestConnections"
-          >
-            Test All
-          </Button>
-        </div>
+        <span class="font-medium">System Status</span>
       </template>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <!-- Plex -->
+        <!-- Apply Mode -->
         <div class="flex items-center gap-3 p-3 rounded-lg bg-surface-tertiary">
           <div class="w-10 h-10 rounded-full bg-surface-primary flex items-center justify-center">
-            <svg class="w-5 h-5 text-content-secondary" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M5.414 3.846L18.586 3.846C20.484 3.846 22 5.362 22 7.26L22 16.74C22 18.638 20.484 20.154 18.586 20.154L5.414 20.154C3.516 20.154 2 18.638 2 16.74L2 7.26C2 5.362 3.516 3.846 5.414 3.846ZM7.5 7.5L12 12L7.5 16.5L7.5 7.5Z"/>
+            <svg class="w-5 h-5 text-content-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
             </svg>
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm">Plex Server</div>
+            <div class="font-medium text-sm">Apply Mode</div>
             <Badge
-              :variant="connectionStatus?.plex?.connected ? 'success' : 'default'"
+              :variant="settings?.apply_enabled ? 'warning' : 'success'"
               size="sm"
             >
-              {{ connectionStatus?.plex?.connected ? 'Connected' : 'Not configured' }}
+              {{ settings?.apply_enabled ? 'Enabled' : 'Safe Mode' }}
             </Badge>
           </div>
         </div>
 
-        <!-- TMDb -->
+        <!-- Version -->
         <div class="flex items-center gap-3 p-3 rounded-lg bg-surface-tertiary">
           <div class="w-10 h-10 rounded-full bg-surface-primary flex items-center justify-center">
             <svg class="w-5 h-5 text-content-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm">TMDb API</div>
-            <Badge
-              :variant="connectionStatus?.tmdb?.connected ? 'success' : 'default'"
-              size="sm"
-            >
-              {{ connectionStatus?.tmdb?.connected ? 'Connected' : 'Not configured' }}
+            <div class="font-medium text-sm">Version</div>
+            <Badge variant="default" size="sm">
+              {{ settings?.version || '1.0.0' }}
             </Badge>
           </div>
         </div>
