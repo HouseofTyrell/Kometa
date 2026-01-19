@@ -361,6 +361,7 @@ export interface PaginatedResponse<T> {
 export type Theme = 'light' | 'dark' | 'system';
 
 export type TabId =
+  | 'dashboard'
   | 'config'
   | 'run'
   | 'logs'

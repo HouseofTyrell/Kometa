@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue';
-import { useLogsStore } from '@/stores';
-import { useLogWebSocket } from '@/composables';
+import { useLogsStore, useRunStore } from '@/stores';
+import { useLogWebSocket, useToast, useConfirm } from '@/composables';
+import { useStopRun } from '@/api';
 import { Card, Button, Badge, Input, Select, Checkbox } from '@/components/common';
 import type { LogLevel } from '@/types';
 
 const logs = useLogsStore();
+const runStore = useRunStore();
+const toast = useToast();
+const { confirmWarning } = useConfirm();
+const stopRunMutation = useStopRun();
 const logContainer = ref<HTMLElement | null>(null);
 
 // WebSocket connection for live logs
@@ -66,6 +71,26 @@ const exportLogs = () => {
   a.click();
   URL.revokeObjectURL(url);
 };
+
+// Cancel current run
+const handleCancelRun = async () => {
+  if (!runStore.isRunning || !runStore.currentRun) return;
+
+  const confirmed = await confirmWarning(
+    'Cancel Run?',
+    'Are you sure you want to cancel the current run? This will stop all processing.'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await stopRunMutation.mutateAsync(runStore.currentRun.id);
+    runStore.setRunning(false);
+    toast.success('Run cancelled');
+  } catch (err) {
+    toast.error('Failed to cancel run');
+  }
+};
 </script>
 
 <template>
@@ -104,6 +129,17 @@ const exportLogs = () => {
         >
           {{ logs.warningCount }} warnings
         </Badge>
+
+        <!-- Cancel Run Button -->
+        <Button
+          v-if="runStore.isRunning"
+          variant="danger"
+          size="sm"
+          :loading="stopRunMutation.isPending.value"
+          @click="handleCancelRun"
+        >
+          Cancel Run
+        </Button>
 
         <Button
           variant="secondary"

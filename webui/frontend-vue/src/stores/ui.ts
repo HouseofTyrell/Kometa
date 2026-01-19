@@ -13,7 +13,7 @@ export const useUIStore = defineStore('ui', () => {
   );
 
   // Navigation
-  const activeTab = ref<TabId>('config');
+  const activeTab = ref<TabId>('dashboard');
   const sidebarOpen = ref(true);
 
   // Toasts

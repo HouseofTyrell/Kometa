@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useConfigStore } from '@/stores';
-import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups } from '@/api';
+import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups, useRestoreBackup } from '@/api';
 import { useToast, useConfirm } from '@/composables';
 import { Card, Button, Badge, Spinner, Modal } from '@/components/common';
 
@@ -16,10 +16,14 @@ const { data: configData, isLoading, error, refetch } = useConfig();
 const saveConfigMutation = useSaveConfig();
 const validateMutation = useValidateConfig();
 const createBackupMutation = useCreateBackup();
+const restoreBackupMutation = useRestoreBackup();
 
 // Backups
 const { data: backups, refetch: refetchBackups } = useConfigBackups();
 const showBackupsModal = ref(false);
+
+// File input ref
+const fileInputRef = ref<HTMLInputElement | null>(null);
 
 // Editor state
 const editorContent = ref('');
@@ -106,6 +110,91 @@ const formatSize = (bytes: number) => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+// Upload config file
+const handleUpload = () => {
+  fileInputRef.value?.click();
+};
+
+const handleFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) return;
+
+  // Validate file type
+  if (!file.name.endsWith('.yml') && !file.name.endsWith('.yaml')) {
+    toast.error('Please select a YAML file (.yml or .yaml)');
+    input.value = '';
+    return;
+  }
+
+  // Check if there are unsaved changes
+  if (hasLocalChanges.value) {
+    const confirmed = await confirmWarning(
+      'Unsaved Changes',
+      'You have unsaved changes. Uploading a new file will replace the current content. Continue?'
+    );
+    if (!confirmed) {
+      input.value = '';
+      return;
+    }
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const content = e.target?.result as string;
+    editorContent.value = content;
+    config.setRawConfig(content);
+    toast.success(`Loaded config from ${file.name}`);
+  };
+  reader.onerror = () => {
+    toast.error('Failed to read the uploaded file');
+  };
+  reader.readAsText(file);
+
+  // Reset input for reuse
+  input.value = '';
+};
+
+// Download config file
+const handleDownload = () => {
+  const content = editorContent.value;
+  if (!content) {
+    toast.error('No configuration to download');
+    return;
+  }
+
+  const blob = new Blob([content], { type: 'text/yaml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'config.yml';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast.success('Configuration downloaded');
+};
+
+// Restore backup
+const handleRestore = async (filename: string) => {
+  const confirmed = await confirmWarning(
+    'Restore Backup?',
+    `Are you sure you want to restore from ${filename}? This will replace the current configuration.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await restoreBackupMutation.mutateAsync(filename);
+    await refetch();
+    showBackupsModal.value = false;
+    toast.success('Backup restored successfully');
+  } catch (err) {
+    toast.error('Failed to restore backup');
+  }
+};
 </script>
 
 <template>
@@ -164,6 +253,25 @@ const formatSize = (bytes: number) => {
         <Button
           variant="secondary"
           size="sm"
+          @click="handleUpload"
+          title="Upload config file"
+        >
+          Upload
+        </Button>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          @click="handleDownload"
+          :disabled="!editorContent"
+          title="Download config file"
+        >
+          Download
+        </Button>
+
+        <Button
+          variant="secondary"
+          size="sm"
           @click="showBackupsModal = true"
         >
           Backups
@@ -188,6 +296,15 @@ const formatSize = (bytes: number) => {
         </Button>
       </div>
     </div>
+
+    <!-- Hidden file input for upload -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".yml,.yaml"
+      class="hidden"
+      @change="handleFileChange"
+    />
 
     <!-- Loading state -->
     <div
@@ -365,6 +482,8 @@ const formatSize = (bytes: number) => {
           <Button
             variant="secondary"
             size="sm"
+            :loading="restoreBackupMutation.isPending.value"
+            @click="handleRestore(backup.filename)"
           >
             Restore
           </Button>

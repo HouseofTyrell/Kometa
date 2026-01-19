@@ -2,6 +2,7 @@
 import { useUIStore } from '@/stores';
 
 // Tab content components
+import DashboardTab from '@/components/tabs/DashboardTab.vue';
 import ConfigTab from '@/components/tabs/ConfigTab.vue';
 import RunTab from '@/components/tabs/RunTab.vue';
 import LogsTab from '@/components/tabs/LogsTab.vue';
@@ -13,6 +14,7 @@ import SettingsTab from '@/components/tabs/SettingsTab.vue';
 const ui = useUIStore();
 
 const tabs = {
+  dashboard: DashboardTab,
   config: ConfigTab,
   run: RunTab,
   logs: LogsTab,
