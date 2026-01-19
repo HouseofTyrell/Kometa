@@ -184,3 +184,31 @@ export function useUpdateSettings() {
       api.put<{ success: boolean }>('/settings', settings),
   });
 }
+
+// Webhook Testing
+
+export interface WebhookTestParams {
+  url: string;
+  event?: string;
+  service?: 'discord' | 'slack' | 'teams' | 'custom';
+}
+
+export interface WebhookTestResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Test a webhook by sending a test notification
+ */
+export function useTestWebhook() {
+  return useMutation({
+    mutationFn: (params: WebhookTestParams) =>
+      api.post<WebhookTestResponse>('/webhooks/test', {
+        url: params.url,
+        event: params.event || 'test',
+        service: params.service || 'custom',
+      }),
+  });
+}

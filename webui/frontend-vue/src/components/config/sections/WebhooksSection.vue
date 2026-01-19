@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import FormField from '../FormField.vue';
 import { Input, Checkbox, Select } from '@/components/common';
+import { useTestWebhook } from '@/api/media';
 
 interface WebhookEntry {
   id: string;
@@ -73,6 +74,42 @@ function deleteWebhook(id: string) {
 function cancelEdit() {
   editingWebhook.value = null;
 }
+
+// Webhook testing
+const testWebhookMutation = useTestWebhook();
+const testingWebhookId = ref<string | null>(null);
+const testResult = ref<{ success: boolean; message: string } | null>(null);
+
+const isTestingWebhook = computed(() => testWebhookMutation.isPending.value);
+
+async function testWebhook(webhook: WebhookEntry) {
+  if (!webhook.url) {
+    testResult.value = { success: false, message: 'No URL configured' };
+    return;
+  }
+
+  testingWebhookId.value = webhook.id;
+  testResult.value = null;
+
+  try {
+    const result = await testWebhookMutation.mutateAsync({ url: webhook.url });
+    testResult.value = {
+      success: result.success,
+      message: result.success ? (result.message || 'Test successful!') : (result.error || 'Test failed'),
+    };
+  } catch (err) {
+    testResult.value = {
+      success: false,
+      message: err instanceof Error ? err.message : 'Test failed',
+    };
+  } finally {
+    testingWebhookId.value = null;
+  }
+}
+
+function clearTestResult() {
+  testResult.value = null;
+}
 </script>
 
 <template>
@@ -100,6 +137,35 @@ function cancelEdit() {
         </svg>
         Documentation
       </a>
+    </div>
+
+    <!-- Test Result Banner -->
+    <div
+      v-if="testResult"
+      :class="[
+        'p-3 rounded-lg flex items-center justify-between',
+        testResult.success ? 'bg-green-500/20 border border-green-500/30' : 'bg-red-500/20 border border-red-500/30'
+      ]"
+    >
+      <div class="flex items-center gap-2">
+        <svg v-if="testResult.success" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+        <svg v-else class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+        <span :class="testResult.success ? 'text-green-400' : 'text-red-400'">
+          {{ testResult.message }}
+        </span>
+      </div>
+      <button
+        class="p-1 rounded hover:bg-white/10 transition-colors"
+        @click="clearTestResult"
+      >
+        <svg class="w-4 h-4 text-content-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Webhooks List -->
@@ -139,6 +205,21 @@ function cancelEdit() {
             </p>
           </div>
           <div class="flex items-center gap-2 ml-4">
+            <button
+              class="p-1.5 rounded hover:bg-kometa-gold/20 text-content-secondary hover:text-kometa-gold transition-colors disabled:opacity-50"
+              title="Test webhook"
+              :disabled="isTestingWebhook && testingWebhookId === webhook.id"
+              @click="testWebhook(webhook)"
+            >
+              <svg v-if="isTestingWebhook && testingWebhookId === webhook.id" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M5 3l14 9-14 9V3z" />
+              </svg>
+            </button>
             <button
               class="p-1.5 rounded hover:bg-surface-tertiary text-content-secondary hover:text-content transition-colors"
               title="Edit webhook"
@@ -249,6 +330,17 @@ function cancelEdit() {
             @click="saveWebhook"
           >
             Save Webhook
+          </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+            :disabled="!editingWebhook.url || isTestingWebhook"
+            @click="testWebhook(editingWebhook)"
+          >
+            <svg v-if="isTestingWebhook && testingWebhookId === editingWebhook.id" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Test Webhook
           </button>
           <button
             class="px-4 py-2 rounded-lg bg-surface-tertiary text-content hover:bg-surface-tertiary/80 transition-colors"

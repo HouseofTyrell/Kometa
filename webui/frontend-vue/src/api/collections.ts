@@ -47,7 +47,7 @@ export function useCollectionFiles() {
   return useQuery({
     queryKey: collectionKeys.files(),
     queryFn: async () => {
-      const response = await api.get<{ files: CollectionFile[] }>('/api/collections/files');
+      const response = await api.get<{ files: CollectionFile[] }>('/collections/files');
       return response.files;
     },
   });
@@ -60,7 +60,7 @@ export function useCollectionFile(filename: string) {
   return useQuery({
     queryKey: collectionKeys.file(filename),
     queryFn: async () => {
-      const response = await api.get<CollectionFileContent>(`/api/collections/file/${encodeURIComponent(filename)}`);
+      const response = await api.get<CollectionFileContent>(`/collections/file/${encodeURIComponent(filename)}`);
       return response;
     },
     enabled: !!filename,
@@ -75,7 +75,7 @@ export function useSaveCollectionFile() {
 
   return useMutation({
     mutationFn: async (params: SaveCollectionFileParams) => {
-      const response = await api.post<SaveCollectionFileResponse>('/api/collections/file/save', params);
+      const response = await api.post<SaveCollectionFileResponse>('/collections/file/save', params);
       return response;
     },
     onSuccess: (_, variables) => {

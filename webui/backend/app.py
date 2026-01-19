@@ -1406,8 +1406,8 @@ async def test_webhook(request: WebhookTestRequest):
     """
     Test a webhook by sending a test notification.
 
-    TODO: Implement actual webhook delivery based on service type.
-    Currently returns a stub response.
+    Automatically detects service type from URL (Discord, Slack, Teams)
+    and formats the payload appropriately.
     """
     import httpx
 

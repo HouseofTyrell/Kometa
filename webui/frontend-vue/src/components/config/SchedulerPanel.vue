@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { Card, Button, Badge, Input, Select, Checkbox } from '@/components/common';
+import { Card, Button, Badge, Select, Checkbox } from '@/components/common';
 import FormField from './FormField.vue';
 import { useSchedulerStatus, useConfigureScheduler, useStopScheduler } from '@/api';
 import { useToast } from '@/composables';
@@ -8,7 +8,7 @@ import { useToast } from '@/composables';
 const toast = useToast();
 
 // API hooks
-const { data: status, isLoading, refetch } = useSchedulerStatus();
+const { data: status, refetch } = useSchedulerStatus();
 const configureMutation = useConfigureScheduler();
 const stopMutation = useStopScheduler();
 

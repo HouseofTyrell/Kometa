@@ -40,7 +40,7 @@ export function useSchedulerStatus() {
   return useQuery({
     queryKey: schedulerKeys.status(),
     queryFn: async () => {
-      const response = await api.get<SchedulerStatus>('/api/scheduler/status');
+      const response = await api.get<SchedulerStatus>('/scheduler/status');
       return response;
     },
     refetchInterval: 30000, // Refresh every 30 seconds
@@ -55,7 +55,7 @@ export function useConfigureScheduler() {
 
   return useMutation({
     mutationFn: async (params: SchedulerConfigParams) => {
-      const response = await api.post<SchedulerConfigResponse>('/api/scheduler/configure', params);
+      const response = await api.post<SchedulerConfigResponse>('/scheduler/configure', params);
       return response;
     },
     onSuccess: () => {
@@ -72,7 +72,7 @@ export function useStopScheduler() {
 
   return useMutation({
     mutationFn: async () => {
-      const response = await api.post<SchedulerConfigResponse>('/api/scheduler/stop', {});
+      const response = await api.post<SchedulerConfigResponse>('/scheduler/stop', {});
       return response;
     },
     onSuccess: () => {
