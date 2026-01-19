@@ -65,58 +65,78 @@ const newCollectionFile = ref<Record<string, string>>({});
 const newOverlayFile = ref<Record<string, string>>({});
 const newMetadataFile = ref<Record<string, string>>({});
 
+// Selected default options (for showing descriptions)
+const selectedCollectionDefault = ref<Record<string, string>>({});
+const selectedOverlayDefault = ref<Record<string, string>>({});
+
 const libraries = computed(() => Object.entries(props.modelValue || {}));
 
-// Default collection options from Kometa
+// Get description for selected collection default
+function getCollectionDescription(libraryName: string): string {
+  const selected = selectedCollectionDefault.value[libraryName];
+  if (!selected) return '';
+  const option = defaultCollectionOptions.find(o => o.value === selected);
+  return option?.description || '';
+}
+
+// Get description for selected overlay default
+function getOverlayDescription(libraryName: string): string {
+  const selected = selectedOverlayDefault.value[libraryName];
+  if (!selected) return '';
+  const option = defaultOverlayOptions.find(o => o.value === selected);
+  return option?.description || '';
+}
+
+// Default collection options from Kometa with descriptions
 const defaultCollectionOptions = [
-  { value: '', label: 'Custom file path...' },
-  { value: 'basic', label: 'Basic (New, Top Rated, etc.)' },
-  { value: 'imdb', label: 'IMDb (Top 250, Popular, etc.)' },
-  { value: 'trakt', label: 'Trakt (Trending, Popular, etc.)' },
-  { value: 'tmdb', label: 'TMDb (Popular, Top Rated, etc.)' },
-  { value: 'tautulli', label: 'Tautulli (Most Watched)' },
-  { value: 'genre', label: 'Genre Collections' },
-  { value: 'franchise', label: 'Franchise Collections' },
-  { value: 'universe', label: 'Universe Collections (MCU, etc.)' },
-  { value: 'decade', label: 'Decade Collections' },
-  { value: 'year', label: 'Year Collections' },
-  { value: 'content_rating_us', label: 'Content Rating (US)' },
-  { value: 'content_rating_uk', label: 'Content Rating (UK)' },
-  { value: 'resolution', label: 'Resolution Collections' },
-  { value: 'audio_language', label: 'Audio Language Collections' },
-  { value: 'subtitle_language', label: 'Subtitle Language Collections' },
-  { value: 'streaming', label: 'Streaming Services' },
-  { value: 'studio', label: 'Studio Collections' },
-  { value: 'network', label: 'Network Collections' },
-  { value: 'country', label: 'Country Collections' },
-  { value: 'region', label: 'Region Collections' },
-  { value: 'aspect', label: 'Aspect Ratio Collections' },
-  { value: 'based', label: 'Based On (Books, Comics, etc.)' },
-  { value: 'actor', label: 'Actor Collections' },
-  { value: 'director', label: 'Director Collections' },
-  { value: 'producer', label: 'Producer Collections' },
-  { value: 'writer', label: 'Writer Collections' },
-  { value: 'seasonal', label: 'Seasonal Collections' },
-  { value: 'award', label: 'Award Collections' },
-  { value: 'chart', label: 'Chart Collections' },
-  { value: 'collectionless', label: 'Collectionless' },
-  { value: 'separator', label: 'Separators' },
+  { value: '', label: 'Custom file path...', description: 'Use your own custom collection file' },
+  { value: 'basic', label: 'Basic (New, Top Rated, etc.)', description: 'Essential collections like New Releases, Top Rated, and Popular' },
+  { value: 'imdb', label: 'IMDb (Top 250, Popular, etc.)', description: 'Collections based on IMDb charts and lists' },
+  { value: 'trakt', label: 'Trakt (Trending, Popular, etc.)', description: 'Collections from Trakt trending and popular lists' },
+  { value: 'tmdb', label: 'TMDb (Popular, Top Rated, etc.)', description: 'Collections from The Movie Database rankings' },
+  { value: 'tautulli', label: 'Tautulli (Most Watched)', description: 'Collections based on your Plex viewing history via Tautulli' },
+  { value: 'genre', label: 'Genre Collections', description: 'Automatically create collections for each genre (Action, Comedy, etc.)' },
+  { value: 'franchise', label: 'Franchise Collections', description: 'Group movies by franchise (Star Wars, James Bond, etc.)' },
+  { value: 'universe', label: 'Universe Collections (MCU, etc.)', description: 'Cinematic universe collections like MCU, DCEU, Wizarding World' },
+  { value: 'decade', label: 'Decade Collections', description: 'Group content by decade (1980s, 1990s, 2000s, etc.)' },
+  { value: 'year', label: 'Year Collections', description: 'Create a collection for each release year' },
+  { value: 'content_rating_us', label: 'Content Rating (US)', description: 'Collections by US content rating (G, PG, PG-13, R, etc.)' },
+  { value: 'content_rating_uk', label: 'Content Rating (UK)', description: 'Collections by UK content rating (U, PG, 12A, 15, 18)' },
+  { value: 'resolution', label: 'Resolution Collections', description: 'Group content by video resolution (4K, 1080p, 720p, etc.)' },
+  { value: 'audio_language', label: 'Audio Language Collections', description: 'Collections by audio language (English, Spanish, French, etc.)' },
+  { value: 'subtitle_language', label: 'Subtitle Language Collections', description: 'Collections by available subtitle languages' },
+  { value: 'streaming', label: 'Streaming Services', description: 'Collections showing which streaming service has each title' },
+  { value: 'studio', label: 'Studio Collections', description: 'Group content by production studio (Disney, Warner Bros, etc.)' },
+  { value: 'network', label: 'Network Collections', description: 'Group TV shows by network (HBO, Netflix, BBC, etc.)' },
+  { value: 'country', label: 'Country Collections', description: 'Collections by country of origin' },
+  { value: 'region', label: 'Region Collections', description: 'Collections by geographic region (Asia, Europe, etc.)' },
+  { value: 'aspect', label: 'Aspect Ratio Collections', description: 'Group content by aspect ratio (16:9, 2.35:1, IMAX, etc.)' },
+  { value: 'based', label: 'Based On (Books, Comics, etc.)', description: 'Collections for content based on books, comics, games, etc.' },
+  { value: 'actor', label: 'Actor Collections', description: 'Automatically create collections for popular actors' },
+  { value: 'director', label: 'Director Collections', description: 'Collections grouping films by director' },
+  { value: 'producer', label: 'Producer Collections', description: 'Collections grouping content by producer' },
+  { value: 'writer', label: 'Writer Collections', description: 'Collections grouping content by writer' },
+  { value: 'seasonal', label: 'Seasonal Collections', description: 'Holiday and seasonal collections (Christmas, Halloween, Summer, etc.)' },
+  { value: 'award', label: 'Award Collections', description: 'Collections for award winners (Oscar, Emmy, Golden Globe, etc.)' },
+  { value: 'chart', label: 'Chart Collections', description: 'Various chart-based collections from multiple sources' },
+  { value: 'collectionless', label: 'Collectionless', description: 'A collection of items that are not in any other collection' },
+  { value: 'separator', label: 'Separators', description: 'Visual separators to organize your collection library' },
 ];
 
 const defaultOverlayOptions = [
-  { value: '', label: 'Custom file path...' },
-  { value: 'resolution', label: 'Resolution Overlay (4K, 1080p, etc.)' },
-  { value: 'audio_codec', label: 'Audio Codec Overlay' },
-  { value: 'video_format', label: 'Video Format Overlay' },
-  { value: 'streaming', label: 'Streaming Service Overlay' },
-  { value: 'ratings', label: 'Ratings Overlay' },
-  { value: 'status', label: 'Status Overlay (Continuing, Ended)' },
-  { value: 'ribbon', label: 'Ribbon Overlays' },
-  { value: 'runtimes', label: 'Runtime Overlay' },
-  { value: 'languages', label: 'Language Flags Overlay' },
-  { value: 'mediastinger', label: 'Media Stinger Overlay' },
-  { value: 'commonsense', label: 'Common Sense Age Rating' },
-  { value: 'direct_play', label: 'Direct Play Overlay' },
+  { value: '', label: 'Custom file path...', description: 'Use your own custom overlay file' },
+  { value: 'resolution', label: 'Resolution Overlay (4K, 1080p, etc.)', description: 'Shows video resolution badge on posters (4K, 1080p, 720p, etc.)' },
+  { value: 'audio_codec', label: 'Audio Codec Overlay', description: 'Displays audio format (Dolby Atmos, DTS-X, TrueHD, etc.)' },
+  { value: 'video_format', label: 'Video Format Overlay', description: 'Shows video format information (HDR, Dolby Vision, etc.)' },
+  { value: 'streaming', label: 'Streaming Service Overlay', description: 'Indicates which streaming service has the content available' },
+  { value: 'ratings', label: 'Ratings Overlay', description: 'Displays IMDb, TMDb, Rotten Tomatoes, or other ratings on posters' },
+  { value: 'status', label: 'Status Overlay (Continuing, Ended)', description: 'Shows TV show status - Continuing, Ended, Canceled, etc.' },
+  { value: 'ribbon', label: 'Ribbon Overlays', description: 'Corner ribbon badges for awards, new releases, trending, etc.' },
+  { value: 'runtimes', label: 'Runtime Overlay', description: 'Displays the runtime/duration of movies or episodes' },
+  { value: 'languages', label: 'Language Flags Overlay', description: 'Shows country/language flags for audio tracks' },
+  { value: 'mediastinger', label: 'Media Stinger Overlay', description: 'Indicates if movie has post/mid-credits scenes' },
+  { value: 'commonsense', label: 'Common Sense Age Rating', description: 'Shows Common Sense Media age recommendations for families' },
+  { value: 'direct_play', label: 'Direct Play Overlay', description: 'Indicates if content can be direct played vs transcoded' },
 ];
 
 const scheduleOptions = [
@@ -397,12 +417,24 @@ function getOperations(libraryName: string): LibraryOperations {
                 <div>
                   <label class="block text-sm font-medium mb-2">Default Collection</label>
                   <Select
-                    :model-value="''"
+                    :model-value="selectedCollectionDefault[name] || ''"
                     :options="defaultCollectionOptions"
                     placeholder="Select a default collection..."
-                    @update:model-value="(val: string) => val && addFileToLibrary(name, 'collection_files', val, true)"
+                    @update:model-value="(val: string) => selectedCollectionDefault[name] = val"
                   />
-                  <p class="text-xs text-content-muted mt-1">Pre-built collection files from Kometa</p>
+                  <p v-if="getCollectionDescription(name)" class="text-sm text-content-secondary mt-2">
+                    {{ getCollectionDescription(name) }}
+                  </p>
+                  <p v-else class="text-xs text-content-muted mt-1">Pre-built collection files from Kometa</p>
+                  <Button
+                    v-if="selectedCollectionDefault[name]"
+                    variant="secondary"
+                    size="sm"
+                    class="mt-2"
+                    @click="() => { addFileToLibrary(name, 'collection_files', selectedCollectionDefault[name], true); selectedCollectionDefault[name] = ''; }"
+                  >
+                    Add Selected Collection
+                  </Button>
                 </div>
                 <div>
                   <label class="block text-sm font-medium mb-2">Custom File Path</label>
@@ -467,12 +499,24 @@ function getOperations(libraryName: string): LibraryOperations {
                 <div>
                   <label class="block text-sm font-medium mb-2">Default Overlay</label>
                   <Select
-                    :model-value="''"
+                    :model-value="selectedOverlayDefault[name] || ''"
                     :options="defaultOverlayOptions"
                     placeholder="Select a default overlay..."
-                    @update:model-value="(val: string) => val && addFileToLibrary(name, 'overlay_files', val, true)"
+                    @update:model-value="(val: string) => selectedOverlayDefault[name] = val"
                   />
-                  <p class="text-xs text-content-muted mt-1">Pre-built overlay files from Kometa</p>
+                  <p v-if="getOverlayDescription(name)" class="text-sm text-content-secondary mt-2">
+                    {{ getOverlayDescription(name) }}
+                  </p>
+                  <p v-else class="text-xs text-content-muted mt-1">Pre-built overlay files from Kometa</p>
+                  <Button
+                    v-if="selectedOverlayDefault[name]"
+                    variant="secondary"
+                    size="sm"
+                    class="mt-2"
+                    @click="() => { addFileToLibrary(name, 'overlay_files', selectedOverlayDefault[name], true); selectedOverlayDefault[name] = ''; }"
+                  >
+                    Add Selected Overlay
+                  </Button>
                 </div>
                 <div>
                   <label class="block text-sm font-medium mb-2">Custom File Path</label>
