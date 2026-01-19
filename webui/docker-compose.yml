@@ -1,9 +1,9 @@
 # Kometa Web UI Docker Compose
 #
-# This compose file runs the Kometa Web UI alongside the main Kometa container.
+# This compose file runs the Kometa Web UI with Vue 3 frontend.
 #
 # Usage:
-#   docker-compose up -d
+#   docker-compose up -d --build
 #
 # Access the UI at: http://localhost:8080
 #
@@ -36,6 +36,8 @@ services:
       - KOMETA_UI_APPLY_ENABLED=${KOMETA_UI_APPLY_ENABLED:-false}
       # Optional: Set a password for the UI
       - KOMETA_UI_PASSWORD=${KOMETA_UI_PASSWORD:-}
+      # UI Mode: 'vue' (default) or 'legacy'
+      - KOMETA_UI_MODE=${KOMETA_UI_MODE:-vue}
       # Timezone
       - TZ=${TZ:-America/New_York}
     healthcheck:

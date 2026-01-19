@@ -4,15 +4,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:only": "vite build",
     "preview": "vite preview",
     "test": "vitest",
+    "test:run": "vitest run",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint . --ext .vue,.js,.jsx,.ts,.tsx",
     "lint:fix": "eslint . --ext .vue,.js,.jsx,.ts,.tsx --fix",
     "format": "prettier --write src/",
-    "type-check": "vue-tsc --noEmit"
+    "format:check": "prettier --check src/",
+    "type-check": "vue-tsc --noEmit",
+    "clean": "rm -rf dist node_modules/.vite",
+    "ci": "npm run type-check && npm run lint && npm run test:run && npm run build:only"
   },
   "dependencies": {
     "vue": "^3.4.0",

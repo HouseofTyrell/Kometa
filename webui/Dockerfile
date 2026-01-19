@@ -1,7 +1,29 @@
 # Kometa Web UI Dockerfile
-# Multi-stage build for the Web UI container
+# Multi-stage build with Vue 3 frontend (default)
+#
+# This is the main Dockerfile for production use.
+# Vue frontend is built and served by default.
 
-FROM python:3.11-slim AS builder
+# ===========================================
+# Stage 1: Build Vue Frontend
+# ===========================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Install dependencies first (better caching)
+COPY frontend-vue/package*.json ./
+RUN npm ci --prefer-offline
+
+# Copy source and build
+COPY frontend-vue/ ./
+RUN npm run build
+
+
+# ===========================================
+# Stage 2: Python Dependencies
+# ===========================================
+FROM python:3.11-slim AS python-builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,12 +42,13 @@ COPY backend/requirements.txt /tmp/webui-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/webui-requirements.txt
 
 # Install Kometa dependencies (for running kometa.py)
-# Note: requirements.txt is copied from the parent directory via build context
 COPY kometa-requirements.txt /tmp/kometa-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/kometa-requirements.txt
 
 
-# Final stage
+# ===========================================
+# Stage 3: Final Image
+# ===========================================
 FROM python:3.11-slim
 
 # Environment
@@ -33,24 +56,31 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     KOMETA_CONFIG_DIR=/config \
+    KOMETA_ROOT=/kometa \
     KOMETA_UI_PORT=8080 \
     KOMETA_UI_HOST=0.0.0.0 \
-    KOMETA_UI_APPLY_ENABLED=false
+    KOMETA_UI_APPLY_ENABLED=false \
+    KOMETA_UI_MODE=vue
 
 # Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
+COPY --from=python-builder /opt/venv /opt/venv
 
 # Create non-root user
 RUN groupadd -r kometa && useradd -r -g kometa kometa
 
 # Create directories
-RUN mkdir -p /config /app && chown -R kometa:kometa /config /app
+RUN mkdir -p /config /app /kometa && chown -R kometa:kometa /config /app
 
 WORKDIR /app
 
-# Copy application files
+# Copy backend application
 COPY --chown=kometa:kometa backend/ /app/backend/
-COPY --chown=kometa:kometa frontend/ /app/frontend/
+
+# Copy built Vue frontend
+COPY --from=frontend-builder --chown=kometa:kometa /app/frontend/dist /app/frontend-vue/dist
+
+# Copy legacy frontend (for fallback if needed)
+COPY --chown=kometa:kometa legacy/ /app/legacy/
 
 # Switch to non-root user
 USER kometa

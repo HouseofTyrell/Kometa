@@ -1,5 +1,9 @@
-# Kometa Web UI Dockerfile
+# Kometa Web UI Dockerfile (Vue variant)
 # Multi-stage build with Vue 3 frontend
+#
+# NOTE: This file is now identical to the main Dockerfile.
+# It is kept for backward compatibility with existing docker-compose.vue.yml references.
+# You can use either Dockerfile or Dockerfile.vue - they produce the same result.
 
 # ===========================================
 # Stage 1: Build Vue Frontend
@@ -77,7 +81,7 @@ COPY --chown=kometa:kometa backend/ /app/backend/
 COPY --from=frontend-builder --chown=kometa:kometa /app/frontend/dist /app/frontend-vue/dist
 
 # Copy legacy frontend (for fallback)
-COPY --chown=kometa:kometa frontend/ /app/frontend/
+COPY --chown=kometa:kometa legacy/ /app/legacy/
 
 # Switch to non-root user
 USER kometa

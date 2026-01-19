@@ -16,8 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
 import aiosqlite
 
@@ -41,8 +40,8 @@ APPLY_ENABLED = os.environ.get("KOMETA_UI_APPLY_ENABLED", "false").lower() == "t
 # Optional simple password protection
 UI_PASSWORD = os.environ.get("KOMETA_UI_PASSWORD", "")
 
-# UI Mode: 'vue' for Vue 3 SPA, 'legacy' for Jinja2 templates
-UI_MODE = os.environ.get("KOMETA_UI_MODE", "legacy").lower()
+# UI Mode: 'vue' for Vue 3 SPA (default), 'legacy' for Jinja2 templates (deprecated)
+UI_MODE = os.environ.get("KOMETA_UI_MODE", "vue").lower()
 
 
 # Initialize managers
@@ -101,19 +100,27 @@ app = FastAPI(
 )
 
 # Static files and templates
-frontend_dir = Path(__file__).parent.parent / "frontend"
+legacy_dir = Path(__file__).parent.parent / "legacy"
 vue_frontend_dir = Path(__file__).parent.parent / "frontend-vue" / "dist"
 
 # Check if Vue build exists
 vue_available = vue_frontend_dir.exists() and (vue_frontend_dir / "index.html").exists()
 
+# Check if legacy files exist (for backward compatibility)
+legacy_available = legacy_dir.exists() and (legacy_dir / "templates" / "index.html").exists()
+
+# Initialize templates variable for legacy mode
+templates = None
+
 if UI_MODE == "vue" and vue_available:
     # Serve Vue 3 SPA
-    app.mount("/assets", StaticFiles(directory=vue_frontend_dir / "assets"), name="assets")
-else:
-    # Serve legacy static files
-    app.mount("/static", StaticFiles(directory=frontend_dir / "static"), name="static")
-    templates = Jinja2Templates(directory=frontend_dir / "templates")
+    if (vue_frontend_dir / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=vue_frontend_dir / "assets"), name="assets")
+elif UI_MODE == "legacy" and legacy_available:
+    # Serve legacy static files (deprecated)
+    from fastapi.templating import Jinja2Templates
+    app.mount("/static", StaticFiles(directory=legacy_dir / "static"), name="static")
+    templates = Jinja2Templates(directory=legacy_dir / "templates")
 
 # Mount overlay images from defaults directory
 overlay_images_dir = KOMETA_ROOT / "defaults" / "overlays" / "images"
@@ -150,14 +157,32 @@ async def index(request: Request):
     """Main UI page."""
     if UI_MODE == "vue" and vue_available:
         # Serve Vue SPA
-        from fastapi.responses import FileResponse
         return FileResponse(vue_frontend_dir / "index.html")
-    else:
-        # Serve legacy Jinja2 template
+    elif UI_MODE == "legacy" and templates is not None:
+        # Serve legacy Jinja2 template (deprecated)
         return templates.TemplateResponse("index.html", {
             "request": request,
             "apply_enabled": APPLY_ENABLED
         })
+    else:
+        # No frontend available
+        return HTMLResponse(
+            content="""
+            <html>
+            <head><title>Kometa Web UI</title></head>
+            <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
+                <h1>Kometa Web UI</h1>
+                <p>The Vue frontend is not built yet. Please run:</p>
+                <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px;">
+cd webui/frontend-vue
+npm install
+npm run build</pre>
+                <p>Then restart the server.</p>
+            </body>
+            </html>
+            """,
+            status_code=503
+        )
 
 
 # Catch-all route for Vue SPA client-side routing
@@ -172,13 +197,11 @@ async def serve_spa(request: Request, full_path: str):
         # Check if it's a static file
         file_path = vue_frontend_dir / full_path
         if file_path.exists() and file_path.is_file():
-            from fastapi.responses import FileResponse
             return FileResponse(file_path)
         # Otherwise return index.html for client-side routing
-        from fastapi.responses import FileResponse
         return FileResponse(vue_frontend_dir / "index.html")
     else:
-        # Legacy mode - 404 for unknown routes
+        # Legacy mode or no frontend - 404 for unknown routes
         raise HTTPException(status_code=404, detail="Not found")
 
 

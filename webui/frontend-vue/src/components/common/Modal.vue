@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onMounted, onUnmounted } from 'vue';
+import { watch, onMounted, onUnmounted, ref, nextTick } from 'vue';
 
 interface Props {
   open: boolean;
@@ -8,6 +8,7 @@ interface Props {
   closeOnOverlay?: boolean;
   closeOnEscape?: boolean;
   showCloseButton?: boolean;
+  ariaDescribedby?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -21,6 +22,9 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'update:open', value: boolean): void;
 }>();
+
+const modalRef = ref<HTMLDivElement | null>(null);
+const previousActiveElement = ref<HTMLElement | null>(null);
 
 const sizeClasses = {
   sm: 'max-w-sm',
@@ -36,9 +40,49 @@ const handleOverlayClick = () => {
   }
 };
 
+const getFocusableElements = (): HTMLElement[] => {
+  if (!modalRef.value) return [];
+  const focusableSelectors = [
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+    'a[href]',
+  ].join(', ');
+  return Array.from(modalRef.value.querySelectorAll<HTMLElement>(focusableSelectors));
+};
+
 const handleKeydown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape' && props.closeOnEscape && props.open) {
+  if (!props.open) return;
+
+  if (event.key === 'Escape' && props.closeOnEscape) {
+    event.preventDefault();
     close();
+    return;
+  }
+
+  // Focus trap - Tab key
+  if (event.key === 'Tab') {
+    const focusableElements = getFocusableElements();
+    if (focusableElements.length === 0) return;
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+
+    if (event.shiftKey) {
+      // Shift + Tab
+      if (document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      }
+    } else {
+      // Tab
+      if (document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    }
   }
 };
 
@@ -47,14 +91,29 @@ const close = () => {
   emit('update:open', false);
 };
 
-// Lock body scroll when modal is open
+// Lock body scroll and manage focus when modal is open
 watch(
   () => props.open,
-  (isOpen) => {
+  async (isOpen) => {
     if (isOpen) {
+      // Store the currently focused element to restore later
+      previousActiveElement.value = document.activeElement as HTMLElement;
       document.body.style.overflow = 'hidden';
+
+      // Focus the first focusable element after the modal opens
+      await nextTick();
+      const focusableElements = getFocusableElements();
+      if (focusableElements.length > 0) {
+        focusableElements[0].focus();
+      } else if (modalRef.value) {
+        modalRef.value.focus();
+      }
     } else {
       document.body.style.overflow = '';
+      // Restore focus to the previous element
+      if (previousActiveElement.value) {
+        previousActiveElement.value.focus();
+      }
     }
   }
 );
@@ -84,12 +143,16 @@ onUnmounted(() => {
 
         <!-- Modal content -->
         <div
+          ref="modalRef"
           :class="[
             'relative w-full bg-surface-secondary border border-border rounded-lg shadow-xl',
             sizeClasses[size],
           ]"
           role="dialog"
           aria-modal="true"
+          :aria-labelledby="title ? 'modal-title' : undefined"
+          :aria-describedby="ariaDescribedby"
+          tabindex="-1"
         >
           <!-- Header -->
           <div
@@ -97,7 +160,10 @@ onUnmounted(() => {
             class="flex items-center justify-between px-4 py-3 border-b border-border"
           >
             <slot name="header">
-              <h2 class="text-lg font-semibold text-content-primary">
+              <h2
+                id="modal-title"
+                class="text-lg font-semibold text-content-primary"
+              >
                 {{ title }}
               </h2>
             </slot>
