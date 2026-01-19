@@ -4,6 +4,7 @@ import { useSettings, useTestConnection, useTestAllConnections } from '@/api';
 import { useRunStore } from '@/stores';
 import { useToast } from '@/composables';
 import { Card, Button, Badge, Spinner, Checkbox, Input } from '@/components/common';
+import SchedulerPanel from '@/components/config/SchedulerPanel.vue';
 import type { ConnectionTest } from '@/types';
 
 const run = useRunStore();
@@ -84,6 +85,9 @@ const getConnectionResult = (serviceId: string) => {
         Configure Web UI settings and test connections
       </p>
     </div>
+
+    <!-- Automated Scheduler -->
+    <SchedulerPanel class="mb-4" />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Safety Settings -->

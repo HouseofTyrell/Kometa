@@ -50,3 +50,12 @@ export {
   useCollectionFile,
   useSaveCollectionFile,
 } from './collections';
+
+// Export scheduler API
+export {
+  schedulerKeys,
+  useSchedulerStatus,
+  useConfigureScheduler,
+  useStopScheduler,
+  type SchedulerStatus,
+} from './scheduler';

@@ -27,6 +27,7 @@ from backend.config_manager import ConfigManager
 from backend.run_manager import RunManager
 from backend.overlay_preview import OverlayPreviewManager
 from backend.poster_fetcher import PosterFetcher
+from backend.scheduler import scheduler
 
 
 # Configuration from environment
@@ -83,6 +84,9 @@ async def lifespan(app: FastAPI):
 
     await run_manager.init_db()
 
+    # Initialize scheduler with run manager callback
+    scheduler.set_callback(run_manager.start_run, asyncio.get_event_loop())
+
     print(f"Kometa Web UI starting on http://{UI_HOST}:{UI_PORT}")
     print(f"Config directory: {CONFIG_DIR}")
     print(f"Apply mode: {'ENABLED (use with caution!)' if APPLY_ENABLED else 'DISABLED (safe mode)'}")
@@ -91,6 +95,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup
+    scheduler.stop()
     await run_manager.close()
 
 
@@ -1239,6 +1244,13 @@ class ScheduleSettingsRequest(BaseModel):
     library_schedules: Optional[Dict[str, Dict[str, Any]]] = None
 
 
+class SchedulerConfigRequest(BaseModel):
+    """Request model for automated scheduler configuration."""
+    enabled: bool = False
+    schedule: Optional[str] = None
+    dry_run_only: bool = True
+
+
 class MapperSettingsRequest(BaseModel):
     """Request model for data mapper settings."""
     genre_mapper: Optional[Dict[str, str]] = None
@@ -1837,6 +1849,44 @@ async def save_schedule_settings(request: ScheduleSettingsRequest):
         return {"success": True, "message": "Schedule settings saved"}
     else:
         raise HTTPException(status_code=500, detail="Failed to save schedule settings")
+
+
+# --- Automated Scheduler Endpoints ---
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """Get current status of the automated scheduler."""
+    return scheduler.get_status()
+
+
+@app.post("/api/scheduler/configure")
+async def configure_scheduler(request: SchedulerConfigRequest):
+    """Configure the automated scheduler.
+
+    When enabled, the scheduler will automatically trigger Kometa runs
+    based on the configured schedule expression.
+    """
+    try:
+        status = scheduler.configure(
+            enabled=request.enabled,
+            schedule_expression=request.schedule,
+            dry_run_only=request.dry_run_only
+        )
+        return {
+            "success": True,
+            "message": "Scheduler configured" if request.enabled else "Scheduler disabled",
+            "status": status
+        }
+    except Exception as e:
+        logger.error("Failed to configure scheduler: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to configure scheduler: {str(e)}")
+
+
+@app.post("/api/scheduler/stop")
+async def stop_scheduler():
+    """Stop the automated scheduler."""
+    scheduler.stop()
+    return {"success": True, "message": "Scheduler stopped", "status": scheduler.get_status()}
 
 
 @app.get("/api/settings/mappers")
