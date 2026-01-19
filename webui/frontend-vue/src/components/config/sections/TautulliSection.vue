@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import FormField from '../FormField.vue';
-import { Input, Checkbox } from '@/components/common';
+import SectionHeader from '../SectionHeader.vue';
+import TestConnectionButton from '../TestConnectionButton.vue';
+import { Input } from '@/components/common';
+import { useConfigSection } from '@/composables';
 
 interface TautulliConfig {
   url?: string;
@@ -18,9 +21,7 @@ const emit = defineEmits<{
   (e: 'test-connection'): void;
 }>();
 
-function updateField<K extends keyof TautulliConfig>(field: K, value: TautulliConfig[K]) {
-  emit('update:modelValue', { ...props.modelValue, [field]: value });
-}
+const { updateField } = useConfigSection<TautulliConfig>(props, emit);
 
 const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue.apikey);
 </script>
@@ -28,29 +29,13 @@ const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue
 <template>
   <div class="space-y-6">
     <!-- Header -->
-    <div class="flex items-start justify-between">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="text-2xl">📊</span>
-          <h3 class="text-lg font-semibold">Tautulli Configuration</h3>
-          <span class="text-xs px-2 py-0.5 rounded bg-surface-tertiary text-content-muted font-medium">Optional</span>
-        </div>
-        <p class="mt-1 text-sm text-content-secondary">
-          Connect Tautulli for watch history and popularity-based collection builders.
-        </p>
-      </div>
-      <a
-        href="https://kometa.wiki/en/latest/config/tautulli/"
-        target="_blank"
-        class="flex items-center gap-1 text-sm text-kometa-gold hover:underline"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-        </svg>
-        Documentation
-      </a>
-    </div>
+    <SectionHeader
+      icon="📊"
+      title="Tautulli Configuration"
+      description="Connect Tautulli for watch history and popularity-based collection builders."
+      docs-url="https://kometa.wiki/en/latest/config/tautulli/"
+      optional
+    />
 
     <!-- Connection Status -->
     <div
@@ -104,17 +89,10 @@ const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue
     </div>
 
     <!-- Test Connection -->
-    <div class="flex items-center gap-4 p-4 rounded-lg bg-surface-tertiary">
-      <button
-        class="px-4 py-2 rounded-lg bg-kometa-gold text-black font-medium hover:bg-kometa-gold/90 transition-colors"
-        @click="emit('test-connection')"
-      >
-        Test Connection
-      </button>
-      <span class="text-sm text-content-secondary">
-        Verify your Tautulli instance is accessible
-      </span>
-    </div>
+    <TestConnectionButton
+      description="Verify your Tautulli instance is accessible"
+      @test="emit('test-connection')"
+    />
 
     <!-- Usage Examples -->
     <div class="border-t border-border pt-6">
