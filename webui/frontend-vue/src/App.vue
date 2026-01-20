@@ -26,7 +26,7 @@ watch(configData, (data) => {
       configStore.setParsedConfig(data.parsed);
     }
   }
-});
+}, { immediate: true });
 
 // Update run store when status changes
 const isRunning = computed(() => runStatus.value?.is_running ?? false);

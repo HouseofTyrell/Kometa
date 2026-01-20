@@ -1,14 +1,36 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useOverlayList, useGenerateOverlayPreview, useMediaSearch } from '@/api';
+import { ref, computed, watch } from 'vue';
+import { useOverlayList, useGenerateOverlayPreview, useGenerateConfigOverlayPreview, useMediaSearch } from '@/api';
+import { useConfigStore } from '@/stores';
 import { useToast } from '@/composables';
 import { Card, Button, Input, Select, Spinner, Badge, ParityStatusBadge } from '@/components/common';
 import type { OverlayPreviewResponse } from '@/types';
 
 const toast = useToast();
+const configStore = useConfigStore();
 
 // Fetch overlay list
 const { data: overlays, isLoading: overlaysLoading } = useOverlayList();
+
+// Get libraries from config store (reflects current editor content)
+// Auto-select first library if available
+const selectedLibrary = ref<string>('');
+
+// Watch for libraries to become available and auto-select first one
+watch(() => configStore.libraries, (libs) => {
+  if (libs.length > 0 && !selectedLibrary.value) {
+    selectedLibrary.value = libs[0];
+  }
+}, { immediate: true });
+
+// Library options for the selector - uses config store's libraries computed
+const libraryOptions = computed(() => {
+  const options = [{ value: '', label: 'Select a library...' }];
+  for (const lib of configStore.libraries) {
+    options.push({ value: lib, label: lib });
+  }
+  return options;
+});
 
 // Filter and group state
 const overlaySearch = ref('');
@@ -69,18 +91,29 @@ const groupedOverlays = computed(() => {
 const selectedOverlay = ref('');
 const searchQuery = ref('');
 const selectedMedia = ref('');
+const selectedMediaTmdbId = ref('');  // Store TMDb ID when available
+const posterSource = ref<'tmdb' | 'plex'>('tmdb');  // Default to TMDb clean poster
 const previewResult = ref<OverlayPreviewResponse | null>(null);
 const isGenerating = ref(false);
 const showParityDetails = ref(false);
 
-// Media search for preview
-const { data: mediaResults, isLoading: mediaLoading } = useMediaSearch({
-  query: searchQuery.value,
-  limit: 10,
-});
+// Poster source options
+const posterSourceOptions = [
+  { value: 'tmdb', label: 'TMDb (Clean)' },
+  { value: 'plex', label: 'Plex (Current)' },
+];
 
-// Generate preview mutation
+// Media search for preview - reactive params
+const { data: mediaResults, isLoading: mediaLoading } = useMediaSearch(
+  computed(() => ({
+    query: searchQuery.value,
+    limit: 10,
+  }))
+);
+
+// Generate preview mutations
 const generatePreview = useGenerateOverlayPreview();
+const generateConfigPreview = useGenerateConfigOverlayPreview();
 
 // Computed preview URL (backwards compatible)
 const previewUrl = computed(() => previewResult.value?.image || '');
@@ -88,7 +121,56 @@ const previewUrl = computed(() => previewResult.value?.image || '');
 // Computed parity info
 const parityInfo = computed(() => previewResult.value?.parity);
 
-// Handle generate preview
+// Check if config is loaded from the store
+const hasConfigLoaded = computed(() => !!configStore.rawConfig && configStore.rawConfig.length > 0);
+
+// Check if we can generate from config (need library selected and media selected)
+const canGenerateFromConfig = computed(() => {
+  return hasConfigLoaded.value && selectedLibrary.value && selectedMedia.value;
+});
+
+// Handle generate preview from config (uses all overlays configured for the library)
+const handleGenerateFromConfig = async () => {
+  if (!selectedLibrary.value) {
+    toast.warning('Please select a library');
+    return;
+  }
+  if (!selectedMedia.value) {
+    toast.warning('Please select a media item');
+    return;
+  }
+
+  isGenerating.value = true;
+  previewResult.value = null;
+
+  try {
+    console.log('[OverlaysTab] Generating from config:', {
+      library: selectedLibrary.value,
+      media_id: selectedMedia.value,
+      poster_source: posterSource.value,
+      config_content_length: configStore.rawConfig?.length || 0,
+    });
+
+    const result = await generateConfigPreview.mutateAsync({
+      media_id: selectedMedia.value,
+      library: selectedLibrary.value,
+      poster_source: posterSource.value,
+      config_content: configStore.rawConfig || undefined,
+    });
+
+    console.log('[OverlaysTab] Config preview result:', result);
+    previewResult.value = result as unknown as OverlayPreviewResponse;
+    toast.success('Preview generated from config');
+  } catch (err: unknown) {
+    console.error('[OverlaysTab] Config preview error:', err);
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    toast.error(`Failed to generate preview: ${errorMessage}`);
+  } finally {
+    isGenerating.value = false;
+  }
+};
+
+// Handle generate preview for a single overlay (optional - for testing individual overlays)
 const handleGeneratePreview = async () => {
   if (!selectedOverlay.value || !selectedMedia.value) {
     toast.warning('Please select an overlay and a media item');
@@ -102,12 +184,17 @@ const handleGeneratePreview = async () => {
     const result = await generatePreview.mutateAsync({
       overlay_name: selectedOverlay.value,
       media_id: selectedMedia.value,
+      poster_source: posterSource.value,
+      library: selectedLibrary.value || undefined,
+      config_content: configStore.rawConfig || undefined,
     });
-    // The API returns the full preview response now
+
     previewResult.value = result as unknown as OverlayPreviewResponse;
     toast.success('Preview generated');
-  } catch (err) {
-    toast.error('Failed to generate preview');
+  } catch (err: unknown) {
+    console.error('[OverlaysTab] Preview error:', err);
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    toast.error(`Failed to generate preview: ${errorMessage}`);
   } finally {
     isGenerating.value = false;
   }
@@ -211,6 +298,11 @@ const getDisplayName = (name: string) => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
             <p>No overlays found</p>
+            <p class="text-xs mt-2">
+              Overlays are loaded from the Kometa defaults directory.
+              <br>
+              Ensure KOMETA_ROOT is set correctly.
+            </p>
           </div>
         </div>
 
@@ -293,6 +385,15 @@ const getDisplayName = (name: string) => {
               <Spinner size="sm" />
             </div>
 
+            <!-- Show error if search returned an error -->
+            <div
+              v-else-if="mediaResults && 'error' in mediaResults && (mediaResults as { error: string }).error"
+              class="p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm"
+            >
+              <p class="font-medium">Search unavailable</p>
+              <p class="text-xs mt-1 opacity-80">{{ (mediaResults as { error: string }).error }}</p>
+            </div>
+
             <div
               v-else-if="mediaResults?.items?.length"
               class="space-y-1 max-h-32 overflow-auto"
@@ -330,15 +431,78 @@ const getDisplayName = (name: string) => {
               </button>
             </div>
 
-            <!-- Generate button -->
-            <Button
-              class="w-full"
-              :loading="isGenerating"
-              :disabled="!selectedOverlay || !selectedMedia"
-              @click="handleGeneratePreview"
-            >
-              Generate Preview
-            </Button>
+            <!-- Poster Source Selector -->
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-content-muted whitespace-nowrap">Poster:</span>
+              <Select
+                v-model="posterSource"
+                :options="posterSourceOptions"
+                size="sm"
+                class="flex-1"
+              />
+            </div>
+
+            <!-- Library Config Selector (for template_variables) -->
+            <div v-if="configStore.libraries.length > 0" class="flex items-center gap-2">
+              <span class="text-xs text-content-muted whitespace-nowrap">Config:</span>
+              <Select
+                v-model="selectedLibrary"
+                :options="libraryOptions"
+                size="sm"
+                class="flex-1"
+              />
+            </div>
+
+            <!-- Config status indicator -->
+            <div class="flex items-center gap-2 text-xs">
+              <span
+                :class="[
+                  'w-2 h-2 rounded-full',
+                  hasConfigLoaded ? 'bg-emerald-500' : 'bg-amber-500'
+                ]"
+              />
+              <span class="text-content-muted">
+                {{ hasConfigLoaded ? 'Using editor config' : 'No config loaded' }}
+              </span>
+            </div>
+
+            <!-- Generate buttons -->
+            <div class="space-y-2">
+              <!-- Primary: Generate from Config (uses all overlays configured for library) -->
+              <Button
+                class="w-full"
+                :loading="isGenerating"
+                :disabled="!canGenerateFromConfig"
+                @click="handleGenerateFromConfig"
+              >
+                Preview from Config
+              </Button>
+
+              <!-- Secondary: Generate single overlay (optional, for testing) -->
+              <Button
+                v-if="selectedOverlay"
+                variant="secondary"
+                class="w-full"
+                :loading="isGenerating"
+                :disabled="!selectedOverlay || !selectedMedia"
+                @click="handleGeneratePreview"
+              >
+                Preview "{{ selectedOverlay }}" Only
+              </Button>
+            </div>
+
+            <!-- Help text -->
+            <p class="text-xs text-content-muted">
+              <template v-if="!selectedLibrary">
+                Select a library above to preview overlays from your config.
+              </template>
+              <template v-else-if="!selectedMedia">
+                Search and select a media item to preview.
+              </template>
+              <template v-else>
+                Click "Preview from Config" to see all overlays configured for {{ selectedLibrary }}.
+              </template>
+            </p>
           </div>
         </Card>
 

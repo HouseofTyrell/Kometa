@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/vue-query';
+import { computed, type MaybeRefOrGetter, toValue } from 'vue';
 import { api } from './client';
 import type { MediaItem, MediaSearchParams, OverlayPreview, ConnectionTest } from '@/types';
 
@@ -22,32 +23,90 @@ export const connectionKeys = {
 
 // Types
 interface MediaSearchResponse {
-  items: MediaItem[];
-  total: number;
+  results: MediaItem[];
+  source: string;
+  query: string;
 }
 
+// Frontend-friendly response format
+interface MediaSearchResult {
+  items: MediaItem[];
+  total: number;
+  error?: string;  // Optional error message if search failed
+}
+
+// Backend overlay list response format
+interface BackendOverlayListResponse {
+  default: Array<{ name: string; path: string; type: string }>;
+  custom: Array<{ name: string; path: string; type: string }>;
+}
+
+// Frontend-friendly overlay list response
 interface OverlayListResponse {
   overlays: string[];
 }
 
 // Media Queries
 
+// Backend media item format
+interface BackendMediaItem {
+  rating_key: string;
+  title: string;
+  year?: string;
+  type: string;
+  library?: string;
+  thumb?: string;
+  thumb_url?: string;
+  art?: string;
+  summary?: string;
+}
+
 /**
  * Search for media items
+ * Accepts reactive params (ref, computed, or getter function)
  */
-export function useMediaSearch(params: MediaSearchParams) {
+export function useMediaSearch(params: MaybeRefOrGetter<MediaSearchParams>) {
   return useQuery({
-    queryKey: mediaKeys.search(params),
-    queryFn: () =>
-      api.get<MediaSearchResponse>('/media/search', {
+    queryKey: computed(() => mediaKeys.search(toValue(params))),
+    queryFn: async () => {
+      const p = toValue(params);
+      const response = await api.get<{ results: BackendMediaItem[]; source: string; query: string; error?: string }>('/media/search', {
         params: {
-          query: params.query,
-          library: params.library,
-          type: params.type,
-          limit: params.limit || 20,
+          query: p.query,
+          library: p.library,
+          source: 'plex',
+          media_type: p.type || 'movie',
+          limit: p.limit || 20,
         },
-      }),
-    enabled: !!params.query && params.query.length >= 2,
+      });
+
+      // If there's an error from the backend (e.g., Plex not configured), return it
+      if (response.error) {
+        return {
+          items: [],
+          total: 0,
+          error: response.error,
+        } as MediaSearchResult;
+      }
+
+      // Transform backend response to frontend format
+      const items: MediaItem[] = (response.results || []).map((item) => ({
+        id: item.rating_key,
+        title: item.title,
+        year: item.year ? parseInt(item.year, 10) : undefined,
+        type: item.type as MediaItem['type'],
+        poster_url: item.thumb_url,
+        summary: item.summary,
+      }));
+      return {
+        items,
+        total: items.length,
+      } as MediaSearchResult;
+    },
+    enabled: computed(() => {
+      const p = toValue(params);
+      return !!p.query && p.query.length >= 2;
+    }),
   });
 }
 
@@ -70,20 +129,60 @@ export function useMediaItem(id: string) {
 export function useOverlayList() {
   return useQuery({
     queryKey: overlayKeys.list(),
-    queryFn: () => api.get<OverlayListResponse>('/overlays'),
+    queryFn: async () => {
+      const response = await api.get<BackendOverlayListResponse>('/overlays');
+      // Transform backend response to frontend format
+      // Flatten default and custom overlays into a single array of names
+      const overlayNames: string[] = [];
+
+      // Add default overlays
+      if (response.default && Array.isArray(response.default)) {
+        for (const overlay of response.default) {
+          overlayNames.push(overlay.name);
+        }
+      }
+
+      // Add custom overlays (prefixed with "custom/" to distinguish)
+      if (response.custom && Array.isArray(response.custom)) {
+        for (const overlay of response.custom) {
+          overlayNames.push(`custom/${overlay.name}`);
+        }
+      }
+
+      return { overlays: overlayNames } as OverlayListResponse;
+    },
   });
 }
 
 /**
- * Generate overlay preview
+ * Generate overlay preview for a single overlay
+ * Uses the simplified endpoint that takes overlay name and media ID
  */
 export function useGenerateOverlayPreview() {
   return useMutation({
     mutationFn: (params: {
       overlay_name: string;
       media_id: string;
+      poster_source?: 'tmdb' | 'plex';  // tmdb = clean poster, plex = current poster
+      library?: string;  // Library name to get overlay config from (uses template_variables from config)
       settings?: Record<string, unknown>;
-    }) => api.post<OverlayPreview>('/overlays/preview', params),
+      config_content?: string;  // Optional YAML config content (uses current editor config instead of disk)
+    }) => api.post<OverlayPreview>('/overlays/preview/simple', params),
+  });
+}
+
+/**
+ * Generate overlay preview from config
+ * Uses all overlays configured for a library in the config's overlay_files section
+ */
+export function useGenerateConfigOverlayPreview() {
+  return useMutation({
+    mutationFn: (params: {
+      media_id: string;
+      library: string;  // Library name to get overlay_files from
+      poster_source?: 'tmdb' | 'plex';  // tmdb = clean poster, plex = current poster
+      config_content?: string;  // Optional YAML config content (uses current editor config instead of disk)
+    }) => api.post<OverlayPreview>('/overlays/preview/from-config', params),
   });
 }
 

@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 
+# Configure logging (temporarily DEBUG for troubleshooting)
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -250,20 +252,26 @@ async def get_libraries():
         libraries = []
 
         if parsed and "libraries" in parsed:
-            for name, config in parsed["libraries"].items():
+            for name, lib_config in parsed["libraries"].items():
                 lib_type = "unknown"
+                has_overlays = False
                 # Try to determine library type from config
-                if config:
-                    if "collection_files" in config:
+                if lib_config:
+                    if "collection_files" in lib_config:
                         lib_type = "collection"
-                    elif "overlay_files" in config:
-                        lib_type = "overlay"
+                    if "overlay_files" in lib_config:
+                        has_overlays = True
+                        if lib_type == "unknown":
+                            lib_type = "overlay"
+                        else:
+                            lib_type = "both"
                 libraries.append({
                     "name": name,
-                    "type": lib_type
+                    "type": lib_type,
+                    "has_overlays": has_overlays
                 })
 
-        return libraries
+        return {"libraries": libraries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -763,8 +771,17 @@ async def get_available_overlays():
     """Get list of available overlay configurations."""
     try:
         overlays = overlay_manager.get_available_overlays()
+        # Add debug info about paths being searched
+        overlays["_debug"] = {
+            "defaults_dir": str(overlay_manager.defaults_dir),
+            "defaults_exists": overlay_manager.defaults_dir.exists(),
+            "config_dir": str(overlay_manager.config_dir),
+            "config_overlays_dir": str(overlay_manager.config_dir / "overlays"),
+            "config_overlays_exists": (overlay_manager.config_dir / "overlays").exists(),
+        }
         return overlays
     except Exception as e:
+        logger.error("Failed to get overlays: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -856,7 +873,548 @@ async def generate_overlay_preview(request: OverlayPreviewRequest):
 
         return result
     except Exception as e:
+        logger.error("Overlay preview error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class SimpleOverlayPreviewRequest(BaseModel):
+    """Simplified preview request that takes overlay name and media ID."""
+    overlay_name: str  # Name of the overlay file (e.g., "rating", "resolution")
+    media_id: str  # Plex rating key
+    poster_source: str = "tmdb"  # "tmdb" for clean poster, "plex" for current poster
+    library: Optional[str] = None  # Library name to get overlay config from (optional)
+    settings: Optional[Dict[str, Any]] = None  # Optional overlay settings (overrides config.yml)
+    config_content: Optional[str] = None  # Optional YAML config content (uses this instead of disk config.yml)
+
+
+def get_overlay_template_variables_from_config(
+    overlay_name: str,
+    library: Optional[str] = None,
+    config_content: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Extract template_variables for a specific overlay from the user's config.
+
+    Searches the config's library overlay_files sections for matching overlay definitions
+    and returns any template_variables defined for that overlay.
+
+    Args:
+        overlay_name: Name of the overlay (e.g., "ratings", "resolution")
+        library: Optional library name to search in (if None, searches all libraries)
+        config_content: Optional YAML string content. If provided, uses this instead of reading from disk.
+
+    Returns:
+        Dictionary of template_variables, empty dict if none found
+    """
+    try:
+        import ruamel.yaml
+        yaml = ruamel.yaml.YAML()
+        yaml.preserve_quotes = True
+
+        if config_content:
+            # Parse config from provided content
+            from io import StringIO
+            config = yaml.load(StringIO(config_content))
+        else:
+            # Read config from disk
+            config_path = CONFIG_DIR / "config.yml"
+            if not config_path.exists():
+                return {}
+            with open(config_path, encoding="utf-8") as f:
+                config = yaml.load(f)
+
+        if not config or "libraries" not in config:
+            return {}
+
+        # Collect all template_variables for the overlay from all libraries
+        all_template_vars: Dict[str, Any] = {}
+
+        for lib_name, lib_config in config.get("libraries", {}).items():
+            # Skip if library filter is specified and doesn't match
+            if library and lib_name != library:
+                continue
+
+            if not isinstance(lib_config, dict):
+                continue
+
+            overlay_files = lib_config.get("overlay_files", [])
+            if not overlay_files:
+                continue
+
+            for overlay_entry in overlay_files:
+                if not isinstance(overlay_entry, dict):
+                    continue
+
+                # Check if this entry matches our overlay
+                entry_name = overlay_entry.get("default") or overlay_entry.get("file", "")
+
+                # Handle both "default: ratings" and "file: config/overlays/custom.yml"
+                if isinstance(entry_name, str):
+                    # Strip path and extension for comparison
+                    entry_base_name = entry_name.replace(".yml", "").replace(".yaml", "")
+                    if "/" in entry_base_name:
+                        entry_base_name = entry_base_name.split("/")[-1]
+
+                    # Check if names match (case-insensitive)
+                    if entry_base_name.lower() == overlay_name.lower():
+                        template_vars = overlay_entry.get("template_variables", {})
+                        if template_vars:
+                            # Merge template_variables (later entries override earlier ones)
+                            all_template_vars.update(template_vars)
+
+        return all_template_vars
+
+    except Exception as e:
+        logger.warning("Failed to extract overlay template_variables from config: %s", e)
+        return {}
+
+
+@app.post("/api/overlays/preview/simple")
+async def generate_simple_overlay_preview(request: SimpleOverlayPreviewRequest):
+    """
+    Generate a preview using just the overlay name and media ID.
+
+    This is a simplified endpoint that:
+    1. Looks up the overlay file by name
+    2. Parses it to get overlay configurations
+    3. Fetches the poster from Plex
+    4. Generates the preview
+    """
+    try:
+        # Find the overlay file by name
+        available = overlay_manager.get_available_overlays()
+        overlay_file = None
+
+        # Check default overlays
+        for ov in available.get("default", []):
+            if ov["name"] == request.overlay_name or ov["name"] == request.overlay_name.replace("custom/", ""):
+                overlay_file = ov
+                break
+
+        # Check custom overlays
+        if not overlay_file:
+            for ov in available.get("custom", []):
+                if ov["name"] == request.overlay_name or f"custom/{ov['name']}" == request.overlay_name:
+                    overlay_file = ov
+                    break
+
+        if not overlay_file:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Overlay '{request.overlay_name}' not found. Available: {[o['name'] for o in available.get('default', [])]}"
+            )
+
+        # Get template_variables from config for this overlay
+        # Uses provided config_content if available, otherwise reads from disk
+        config_template_vars = get_overlay_template_variables_from_config(
+            request.overlay_name,
+            library=request.library,
+            config_content=request.config_content
+        )
+
+        # Merge with any settings provided in the request (request settings override config)
+        template_vars = {**config_template_vars}
+        if request.settings:
+            template_vars.update(request.settings)
+
+        logger.debug("Using template_variables for %s: %s", request.overlay_name, template_vars)
+
+        # Parse the overlay file with template_variables
+        parsed = overlay_manager.parse_overlay_file(
+            overlay_file["path"],
+            template_variables=template_vars if template_vars else None
+        )
+        overlays = parsed.get("overlays", [])
+
+        if not overlays:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No overlays found in '{request.overlay_name}'"
+            )
+
+        # Reload config to get latest Plex credentials
+        poster_fetcher.reload_config()
+
+        # Fetch poster and metadata
+        sample_poster = None
+        media_metadata = None
+        poster_data = None
+
+        if poster_fetcher.has_plex:
+            # Always get metadata from Plex (needed for text variables)
+            media_metadata = poster_fetcher.get_plex_item_metadata(request.media_id)
+
+            # Determine poster source
+            if request.poster_source == "tmdb" and poster_fetcher.has_tmdb:
+                # Use TMDb clean poster if available
+                tmdb_id = media_metadata.get("tmdb_id") if media_metadata else None
+                media_type = media_metadata.get("media_type", "movie") if media_metadata else "movie"
+
+                if tmdb_id:
+                    poster_data = poster_fetcher.fetch_poster_image(
+                        tmdb_id=tmdb_id,
+                        media_type=media_type
+                    )
+                    logger.debug("Fetched TMDb poster for tmdb_id=%s", tmdb_id)
+
+                # Fallback to Plex if TMDb poster not available
+                if not poster_data:
+                    logger.debug("TMDb poster not available, falling back to Plex")
+                    poster_data = poster_fetcher.fetch_poster_image(rating_key=request.media_id)
+            else:
+                # Use Plex poster (current poster with any existing overlays)
+                poster_data = poster_fetcher.fetch_poster_image(rating_key=request.media_id)
+
+            if poster_data:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    f.write(poster_data)
+                    sample_poster = f.name
+
+        # Generate preview with all overlays from the file
+        result = overlay_manager.generate_preview(
+            overlays=overlays,
+            canvas_type="portrait",
+            sample_poster=sample_poster,
+            media_metadata=media_metadata,
+            queues=parsed.get("queue_positions", {})
+        )
+
+        # Clean up temp file
+        if sample_poster:
+            import os
+            try:
+                os.unlink(sample_poster)
+            except OSError:
+                pass
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Simple overlay preview error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ConfigOverlayPreviewRequest(BaseModel):
+    """Preview request that uses overlays from the config."""
+    media_id: str  # Plex rating key
+    library: str  # Library name to get overlay config from
+    poster_source: str = "tmdb"  # "tmdb" for clean poster, "plex" for current poster
+    config_content: Optional[str] = None  # Optional YAML config content (uses this instead of disk config.yml)
+
+
+def get_library_overlays_from_config(
+    library: str,
+    config_content: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Extract overlay_files configuration for a library from the config.
+
+    Returns a list of overlay file entries with their template_variables.
+    """
+    try:
+        import ruamel.yaml
+        yaml = ruamel.yaml.YAML()
+        yaml.preserve_quotes = True
+
+        if config_content:
+            from io import StringIO
+            config = yaml.load(StringIO(config_content))
+        else:
+            config_path = CONFIG_DIR / "config.yml"
+            if not config_path.exists():
+                return []
+            with open(config_path, encoding="utf-8") as f:
+                config = yaml.load(f)
+
+        if not config or "libraries" not in config:
+            return []
+
+        lib_config = config.get("libraries", {}).get(library)
+        if not lib_config or not isinstance(lib_config, dict):
+            return []
+
+        overlay_files = lib_config.get("overlay_files", [])
+        if not overlay_files:
+            return []
+
+        return list(overlay_files)
+
+    except Exception as e:
+        logger.warning("Failed to extract overlay_files from config: %s", e)
+        return []
+
+
+@app.post("/api/overlays/preview/from-config")
+async def generate_config_overlay_preview(request: ConfigOverlayPreviewRequest):
+    """
+    Generate a preview using overlays configured for a library in config.yml.
+
+    This reads the overlay_files section for the specified library and
+    renders all configured overlays on the media item's poster.
+    """
+    try:
+        # Get overlay_files from config for this library
+        overlay_entries = get_library_overlays_from_config(
+            request.library,
+            config_content=request.config_content
+        )
+
+        if not overlay_entries:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No overlay_files configured for library '{request.library}'"
+            )
+
+        logger.info("Config overlay preview: Found %d overlay entries for library '%s'", len(overlay_entries), request.library)
+        for i, entry in enumerate(overlay_entries):
+            logger.info("  Entry %d: %s", i, entry)
+
+        # Get available overlays to match against
+        available = overlay_manager.get_available_overlays()
+        all_available = {ov["name"]: ov for ov in available.get("default", [])}
+        for ov in available.get("custom", []):
+            all_available[f"custom/{ov['name']}"] = ov
+
+        logger.info("Available overlays: %d default, %d custom",
+                    len(available.get("default", [])), len(available.get("custom", [])))
+
+        # Collect all overlays to render
+        all_overlays = []
+        all_queues = {}
+
+        for entry in overlay_entries:
+            if not isinstance(entry, dict):
+                logger.warning("Skipping non-dict entry: %s", entry)
+                continue
+
+            # Get the overlay name (default: or file:)
+            overlay_name = entry.get("default") or entry.get("file", "")
+            if not overlay_name:
+                logger.warning("Entry has no default or file key: %s", entry)
+                continue
+
+            # Get template_variables for this overlay
+            template_vars = entry.get("template_variables", {})
+            logger.info("Processing overlay '%s' with template_vars: %s", overlay_name, template_vars)
+
+            # Find the overlay file
+            overlay_file = None
+            # Try exact match first
+            if overlay_name in all_available:
+                overlay_file = all_available[overlay_name]
+                logger.info("  Found exact match: %s", overlay_file.get("path", "unknown"))
+            else:
+                # Try matching by base name
+                base_name = overlay_name.replace(".yml", "").replace(".yaml", "")
+                if "/" in base_name:
+                    base_name = base_name.split("/")[-1]
+                for name, ov in all_available.items():
+                    if ov["name"] == base_name or ov["name"].endswith(f"/{base_name}"):
+                        overlay_file = ov
+                        logger.info("  Found by base name '%s': %s", base_name, ov.get("path", "unknown"))
+                        break
+
+            if not overlay_file:
+                logger.warning("Overlay '%s' not found in available overlays", overlay_name)
+                continue
+
+            # Parse the overlay file with template_variables
+            try:
+                parsed = overlay_manager.parse_overlay_file(
+                    overlay_file["path"],
+                    template_variables=dict(template_vars) if template_vars else None
+                )
+                overlays_from_file = parsed.get("overlays", [])
+                logger.info("  Parsed %d overlays from '%s'", len(overlays_from_file), overlay_name)
+                for ov in overlays_from_file:
+                    logger.info("    - %s (type=%s, image_url=%s)",
+                                ov.get("name", "?"), ov.get("type", "?"), ov.get("image_url", "none"))
+                all_overlays.extend(overlays_from_file)
+
+                # Merge queue positions
+                file_queues = parsed.get("queue_positions", {})
+                if file_queues:
+                    logger.info("  Queue positions: %s", list(file_queues.keys()))
+                for queue_name, queue_items in file_queues.items():
+                    if queue_name not in all_queues:
+                        all_queues[queue_name] = []
+                    all_queues[queue_name].extend(queue_items)
+
+            except Exception as e:
+                logger.warning("Failed to parse overlay '%s': %s", overlay_name, e, exc_info=True)
+                continue
+
+        if not all_overlays:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid overlays found in library '{request.library}' config"
+            )
+
+        # For preview, filter to show only one overlay per group
+        # For rating groups, prefer "Fresh" variants as they represent normal ratings
+        # For other groups, use highest weight
+        groups_seen = {}
+        filtered_overlays = []
+
+        def get_overlay_name(ov_dict):
+            """Get the best available name for an overlay."""
+            return ov_dict.get("_original_name") or ov_dict.get("display_name") or ov_dict.get("name", "")
+
+        for ov in all_overlays:
+            group = ov.get("group")
+            if group:
+                if group not in groups_seen:
+                    groups_seen[group] = ov
+                else:
+                    # Get names using fallback chain
+                    current_name = get_overlay_name(ov)
+                    existing_name = get_overlay_name(groups_seen[group])
+
+                    # For rating groups, prefer Fresh > Rotten > Top
+                    is_rating_group = group.startswith("rating") and group.endswith("_group")
+                    if is_rating_group:
+                        current_is_fresh = "Fresh" in str(current_name)
+                        existing_is_fresh = "Fresh" in str(existing_name)
+
+                        # Fresh is preferred for normal preview - always replace non-Fresh with Fresh
+                        if current_is_fresh and not existing_is_fresh:
+                            groups_seen[group] = ov
+                        # Don't replace Fresh with anything else
+                    else:
+                        # For non-rating groups, use weight
+                        if ov.get("weight", 0) > groups_seen[group].get("weight", 0):
+                            groups_seen[group] = ov
+            else:
+                filtered_overlays.append(ov)
+
+        # Add one overlay per group
+        filtered_overlays.extend(groups_seen.values())
+
+        logger.info("After group filtering: %d overlays (from %d total) for library '%s'",
+                    len(filtered_overlays), len(all_overlays), request.library)
+        for ov in filtered_overlays:
+            logger.info("  - %s (group=%s, default=%s)",
+                        ov.get("_original_name", ov.get("name", "?")),
+                        ov.get("group", "none"),
+                        ov.get("default", "none"))
+
+        all_overlays = filtered_overlays
+
+        # Reload config to get latest Plex credentials
+        poster_fetcher.reload_config()
+
+        # Fetch poster and metadata
+        sample_poster = None
+        media_metadata = None
+        poster_data = None
+
+        if poster_fetcher.has_plex:
+            media_metadata = poster_fetcher.get_plex_item_metadata(request.media_id)
+
+            if request.poster_source == "tmdb" and poster_fetcher.has_tmdb:
+                tmdb_id = media_metadata.get("tmdb_id") if media_metadata else None
+                media_type = media_metadata.get("media_type", "movie") if media_metadata else "movie"
+
+                if tmdb_id:
+                    poster_data = poster_fetcher.fetch_poster_image(
+                        tmdb_id=tmdb_id,
+                        media_type=media_type
+                    )
+
+                if not poster_data:
+                    poster_data = poster_fetcher.fetch_poster_image(rating_key=request.media_id)
+            else:
+                poster_data = poster_fetcher.fetch_poster_image(rating_key=request.media_id)
+
+            if poster_data:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    f.write(poster_data)
+                    sample_poster = f.name
+
+        # Generate preview
+        result = overlay_manager.generate_preview(
+            overlays=all_overlays,
+            canvas_type="portrait",
+            sample_poster=sample_poster,
+            media_metadata=media_metadata,
+            queues=all_queues
+        )
+
+        # Clean up temp file
+        if sample_poster:
+            import os
+            try:
+                os.unlink(sample_poster)
+            except OSError:
+                pass
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Config overlay preview error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/overlays/debug-expand")
+async def debug_expand_overlay(
+    overlay_name: str = "ratings",
+    template_vars: Optional[str] = None
+):
+    """Debug endpoint to test template expansion."""
+    try:
+        import json
+
+        # Parse template_vars if provided
+        user_vars = {}
+        if template_vars:
+            user_vars = json.loads(template_vars)
+
+        # Find the overlay file
+        available = overlay_manager.get_available_overlays()
+        overlay_file = None
+        for ov in available.get("default", []):
+            if ov["name"] == overlay_name:
+                overlay_file = ov
+                break
+
+        if not overlay_file:
+            return {"error": f"Overlay '{overlay_name}' not found"}
+
+        # Parse with template expansion
+        parsed = overlay_manager.parse_overlay_file(
+            overlay_file["path"],
+            template_variables=user_vars
+        )
+
+        # Return detailed info
+        return {
+            "overlay_name": overlay_name,
+            "template_vars": user_vars,
+            "overlay_count": len(parsed.get("overlays", [])),
+            "overlays": [
+                {
+                    "name": ov.get("name"),
+                    "display_name": ov.get("display_name"),
+                    "type": ov.get("type"),
+                    "default": ov.get("default"),
+                    "group": ov.get("group"),
+                    "horizontal_offset": ov.get("horizontal_offset"),
+                    "horizontal_align": ov.get("horizontal_align"),
+                    "vertical_offset": ov.get("vertical_offset"),
+                    "vertical_align": ov.get("vertical_align"),
+                }
+                for ov in parsed.get("overlays", [])
+            ]
+        }
+    except Exception as e:
+        logger.error("Debug expand error: %s", e, exc_info=True)
+        return {"error": str(e)}
 
 
 @app.get("/api/overlays/defaults")
@@ -896,9 +1454,17 @@ async def get_default_overlays():
 async def get_media_sources_status():
     """Get status of available media sources (Plex, TMDb)."""
     try:
+        # Reload config to get latest status
+        poster_fetcher.reload_config()
         status = poster_fetcher.get_status()
+        # Add debug info about config path
+        status["_debug"] = {
+            "config_path": str(poster_fetcher.config_path),
+            "config_exists": poster_fetcher.config_path.exists(),
+        }
         return status
     except Exception as e:
+        logger.error("Failed to get media status: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -922,15 +1488,43 @@ async def search_media(
 ):
     """Search for media items in Plex or TMDb."""
     try:
+        # Reload config to pick up any changes
+        poster_fetcher.reload_config()
+
+        # Include debug info about configuration status
+        debug_info = {
+            "config_path": str(poster_fetcher.config_path),
+            "config_exists": poster_fetcher.config_path.exists(),
+            "plex_configured": poster_fetcher.has_plex,
+            "tmdb_configured": poster_fetcher.has_tmdb,
+        }
+
         if source == "plex":
+            if not poster_fetcher.has_plex:
+                return {
+                    "results": [],
+                    "source": source,
+                    "query": query,
+                    "error": "Plex not configured. Add plex.url and plex.token to config.yml.",
+                    "_debug": debug_info
+                }
             results = poster_fetcher.search_plex(query, library=library, limit=limit)
         elif source == "tmdb":
+            if not poster_fetcher.has_tmdb:
+                return {
+                    "results": [],
+                    "source": source,
+                    "query": query,
+                    "error": "TMDb not configured. Add tmdb.apikey to config.yml.",
+                    "_debug": debug_info
+                }
             results = poster_fetcher.search_tmdb(query, media_type=media_type, limit=limit)
         else:
             raise HTTPException(status_code=400, detail=f"Invalid source: {source}")
 
-        return {"results": results, "source": source, "query": query}
+        return {"results": results, "source": source, "query": query, "_debug": debug_info}
     except Exception as e:
+        logger.error("Media search error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

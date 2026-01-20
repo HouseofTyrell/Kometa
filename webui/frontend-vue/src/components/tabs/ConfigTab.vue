@@ -136,6 +136,8 @@ watch(
         editorContent.value = newContent;
         originalContent.value = newContent;
         config.setRawConfig(newContent, false);
+        // Auto-test connections when config is loaded
+        autoTestConnections(newContent);
       }
     }
   },
@@ -264,6 +266,8 @@ const handleFileChange = async (event: Event) => {
     editorContent.value = content;
     config.setRawConfig(content);
     toast.success(`Loaded config from ${file.name}`);
+    // Auto-test connections when config file is uploaded
+    autoTestConnections(content);
   };
   reader.onerror = () => {
     toast.error('Failed to read the uploaded file');
@@ -320,7 +324,7 @@ const handleRestore = async (filename: string) => {
 };
 
 // Test connection
-const handleTestConnection = async (service: string, serviceConfig: Record<string, unknown>) => {
+const handleTestConnection = async (service: string, serviceConfig: Record<string, unknown>, showToast = true) => {
   try {
     const result = await testConnectionMutation.mutateAsync({
       service: service as TestableService,
@@ -328,14 +332,63 @@ const handleTestConnection = async (service: string, serviceConfig: Record<strin
     });
     if (result.success) {
       connections.setConnectionStatus(service as TestableService, true, result.message);
-      toast.success(`${service} connection successful`);
+      if (showToast) toast.success(`${service} connection successful`);
     } else {
       connections.setConnectionStatus(service as TestableService, false, result.error || result.message);
-      toast.error(`${service} connection failed: ${result.error || result.message}`);
+      if (showToast) toast.error(`${service} connection failed: ${result.error || result.message}`);
     }
   } catch (err) {
     connections.setConnectionStatus(service as TestableService, false, 'Connection test failed');
-    toast.error(`Failed to test ${service} connection`);
+    if (showToast) toast.error(`Failed to test ${service} connection`);
+  }
+};
+
+// Auto-test all configured connections
+const autoTestConnections = async (configContent: string) => {
+  try {
+    // Parse YAML to extract service configs
+    const yaml = await import('yaml');
+    const parsed = yaml.parse(configContent);
+    if (!parsed) return;
+
+    const servicesToTest: Array<{ service: TestableService; config: Record<string, unknown> }> = [];
+
+    // Check Plex
+    if (parsed.plex?.url && parsed.plex?.token) {
+      servicesToTest.push({ service: 'plex', config: parsed.plex });
+    }
+
+    // Check TMDb
+    if (parsed.tmdb?.apikey) {
+      servicesToTest.push({ service: 'tmdb', config: parsed.tmdb });
+    }
+
+    // Check Radarr
+    if (parsed.radarr?.url && parsed.radarr?.token) {
+      servicesToTest.push({ service: 'radarr', config: parsed.radarr });
+    }
+
+    // Check Sonarr
+    if (parsed.sonarr?.url && parsed.sonarr?.token) {
+      servicesToTest.push({ service: 'sonarr', config: parsed.sonarr });
+    }
+
+    // Check Tautulli
+    if (parsed.tautulli?.url && parsed.tautulli?.apikey) {
+      servicesToTest.push({ service: 'tautulli', config: parsed.tautulli });
+    }
+
+    // Test all services in parallel (silently - no toasts)
+    if (servicesToTest.length > 0) {
+      await Promise.allSettled(
+        servicesToTest.map(({ service, config: serviceConfig }) =>
+          handleTestConnection(service, serviceConfig, false)
+        )
+      );
+    }
+  } catch (err) {
+    // Silently fail - don't interrupt user flow
+    console.error('Auto-test connections failed:', err);
   }
 };
 </script>

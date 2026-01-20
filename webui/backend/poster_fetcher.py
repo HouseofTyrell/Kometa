@@ -42,6 +42,7 @@ class PosterFetcher:
     def _load_config(self):
         """Load Plex and TMDb credentials from config."""
         if not self.config_path.exists():
+            logger.debug("Config file not found at %s", self.config_path)
             return
 
         try:
@@ -54,6 +55,8 @@ class PosterFetcher:
                 if isinstance(plex_config, dict):
                     self._plex_url = plex_config.get("url", "").rstrip("/")
                     self._plex_token = plex_config.get("token")
+                    logger.debug("Loaded Plex config: url=%s, has_token=%s",
+                               self._plex_url, bool(self._plex_token))
 
                 # Get TMDb API key
                 tmdb_config = config.get("tmdb", {})
@@ -62,6 +65,10 @@ class PosterFetcher:
 
         except Exception as e:
             logger.warning("Failed to load config: %s", e)
+
+    def reload_config(self):
+        """Reload config from disk (call after config changes)."""
+        self._load_config()
 
     @property
     def has_plex(self) -> bool:
@@ -302,6 +309,32 @@ class PosterFetcher:
                 metadata["audioCodec"] = media.get("audioCodec")
                 metadata["videoCodec"] = media.get("videoCodec")
                 metadata["bitrate"] = int(media.get("bitrate")) if media.get("bitrate") else None
+
+            # Extract GUIDs (TMDb, IMDb, TVDB IDs)
+            guids = item.findall(".//Guid")
+            for guid in guids:
+                guid_id = guid.get("id", "")
+                if guid_id.startswith("tmdb://"):
+                    metadata["tmdb_id"] = guid_id.replace("tmdb://", "")
+                elif guid_id.startswith("imdb://"):
+                    metadata["imdb_id"] = guid_id.replace("imdb://", "")
+                elif guid_id.startswith("tvdb://"):
+                    metadata["tvdb_id"] = guid_id.replace("tvdb://", "")
+
+            # Also check the main guid attribute (older Plex format)
+            main_guid = item.get("guid", "")
+            if "themoviedb://" in main_guid:
+                tmdb_match = re.search(r"themoviedb://(\d+)", main_guid)
+                if tmdb_match and "tmdb_id" not in metadata:
+                    metadata["tmdb_id"] = tmdb_match.group(1)
+            elif "imdb://" in main_guid:
+                imdb_match = re.search(r"imdb://(tt\d+)", main_guid)
+                if imdb_match and "imdb_id" not in metadata:
+                    metadata["imdb_id"] = imdb_match.group(1)
+
+            # Determine media type for TMDb lookups
+            item_type = item.get("type", "movie")
+            metadata["media_type"] = "tv" if item_type in ["show", "season", "episode"] else "movie"
 
             return metadata
 

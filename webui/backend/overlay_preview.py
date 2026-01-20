@@ -8,12 +8,15 @@ Enhanced with Kometa-parity variable substitution and parity tracking.
 import os
 import re
 import base64
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Literal
 from io import BytesIO
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -630,13 +633,15 @@ class OverlayPreviewManager:
             if path.exists():
                 return path
 
-        # Check default attribute (e.g., "default: resolution/4k")
+        # Check default attribute (e.g., "default: resolution/4k" or "rating/RT-Crit-Fresh")
         if overlay.get("default"):
-            default_val = overlay["default"]
+            default_val = str(overlay["default"])
+            logger.debug("Looking for image with default='%s'", default_val)
 
-            # Handle paths with subdirectories
+            # Handle paths with subdirectories (e.g., "rating/IMDb")
             if "/" in default_val:
                 path = self.images_dir / f"{default_val}.png"
+                logger.debug("  Trying path: %s (exists=%s)", path, path.exists())
                 if path.exists():
                     return path
 
@@ -736,6 +741,9 @@ class OverlayPreviewManager:
                                 if path.exists():
                                     return path
 
+        # Log if image not found
+        logger.warning("Image not found for overlay: name=%s, default=%s, display_name=%s",
+                       overlay.get("name"), overlay.get("default"), overlay.get("display_name"))
         return None
 
     def get_overlay_image_url(self, overlay: Dict) -> Optional[str]:

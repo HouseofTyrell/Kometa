@@ -38,6 +38,7 @@ export {
   useMediaItem,
   useOverlayList,
   useGenerateOverlayPreview,
+  useGenerateConfigOverlayPreview,
   useTestConnection,
   useTestAllConnections,
   useSettings,

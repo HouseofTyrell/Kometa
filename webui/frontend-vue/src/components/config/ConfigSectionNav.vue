@@ -20,9 +20,9 @@ const emit = defineEmits<{
   (e: 'select', sectionId: string): void;
 }>();
 
-// Dropdown state
+// Dropdown state - menu collapsed by default, but groups inside are expanded
 const isOpen = ref(false);
-const expandedGroups = ref<Set<string>>(new Set(['Core'])); // Core expanded by default
+const expandedGroups = ref<Set<string>>(new Set(['Core', 'Settings', 'Integrations', 'Metadata', 'Notifications'])); // All groups expanded by default
 const expandedSections = ref<Set<string>>(new Set()); // For sections with children
 const buttonRef = ref<HTMLElement | null>(null);
 const dropdownRef = ref<HTMLElement | null>(null);
