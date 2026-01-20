@@ -5,6 +5,7 @@ import SectionHeader from '../SectionHeader.vue';
 import TestConnectionButton from '../TestConnectionButton.vue';
 import { Input } from '@/components/common';
 import { useConfigSection } from '@/composables';
+import { useConnectionsStore } from '@/stores';
 
 interface TautulliConfig {
   url?: string;
@@ -22,8 +23,11 @@ const emit = defineEmits<{
 }>();
 
 const { updateField } = useConfigSection<TautulliConfig>(props, emit);
+const connections = useConnectionsStore();
 
 const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue.apikey);
+const connectionStatus = computed(() => connections.getStatus('tautulli'));
+const isConnected = computed(() => connections.isConnected('tautulli'));
 </script>
 
 <template>
@@ -40,20 +44,44 @@ const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue
     <!-- Connection Status -->
     <div
       class="p-4 rounded-lg"
-      :class="isConfigured ? 'bg-success/10 border border-success/20' : 'bg-surface-tertiary'"
+      :class="[
+        isConnected ? 'bg-success/10 border border-success/20' :
+        connectionStatus?.tested && !connectionStatus?.success ? 'bg-error/10 border border-error/20' :
+        'bg-surface-tertiary'
+      ]"
     >
       <div class="flex items-center gap-3">
-        <span :class="isConfigured ? 'text-success' : 'text-content-muted'" class="text-xl">
-          {{ isConfigured ? '✓' : '📊' }}
+        <span
+          :class="[
+            isConnected ? 'text-success' :
+            connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+            'text-content-muted'
+          ]"
+          class="text-xl"
+        >
+          {{ isConnected ? '✓' : connectionStatus?.tested && !connectionStatus?.success ? '✗' : '📊' }}
         </span>
         <div class="flex-1">
-          <p class="font-medium" :class="isConfigured ? 'text-success' : 'text-content'">
-            {{ isConfigured ? 'Tautulli Connected' : 'Connect Tautulli' }}
+          <p
+            class="font-medium"
+            :class="[
+              isConnected ? 'text-success' :
+              connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+              'text-content'
+            ]"
+          >
+            {{ isConnected ? 'Tautulli Connected' :
+               connectionStatus?.tested && !connectionStatus?.success ? 'Connection Failed' :
+               isConfigured ? 'Not Tested' : 'Connect Tautulli' }}
           </p>
           <p class="text-sm text-content-secondary">
-            {{ isConfigured
-              ? 'Your Tautulli instance is configured.'
-              : 'Enter your Tautulli URL and API key to enable watch history features.' }}
+            {{ isConnected
+              ? 'Your Tautulli instance is configured and verified.'
+              : connectionStatus?.tested && !connectionStatus?.success
+                ? connectionStatus?.message || 'Connection test failed. Check your URL and API key.'
+                : isConfigured
+                  ? 'Click "Test Connection" to verify your settings.'
+                  : 'Enter your Tautulli URL and API key to enable watch history features.' }}
           </p>
         </div>
       </div>

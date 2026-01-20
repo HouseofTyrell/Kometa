@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import FormField from '../FormField.vue';
 import SectionHeader from '../SectionHeader.vue';
 import TestConnectionButton from '../TestConnectionButton.vue';
 import { Input, Checkbox, Select } from '@/components/common';
 import { useConfigSection } from '@/composables';
+import { useConnectionsStore } from '@/stores';
 
 interface RadarrConfig {
   url?: string;
@@ -32,6 +34,11 @@ const emit = defineEmits<{
 }>();
 
 const { updateField } = useConfigSection<RadarrConfig>(props, emit);
+const connections = useConnectionsStore();
+
+const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue.token);
+const connectionStatus = computed(() => connections.getStatus('radarr'));
+const isConnected = computed(() => connections.isConnected('radarr'));
 
 const availabilityOptions = [
   { value: 'announced', label: 'Announced' },
@@ -51,6 +58,52 @@ const availabilityOptions = [
       docs-url="https://kometa.wiki/en/latest/config/radarr/"
       optional
     />
+
+    <!-- Connection Status -->
+    <div
+      class="p-4 rounded-lg"
+      :class="[
+        isConnected ? 'bg-success/10 border border-success/20' :
+        connectionStatus?.tested && !connectionStatus?.success ? 'bg-error/10 border border-error/20' :
+        'bg-surface-tertiary'
+      ]"
+    >
+      <div class="flex items-center gap-3">
+        <span
+          :class="[
+            isConnected ? 'text-success' :
+            connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+            'text-content-muted'
+          ]"
+          class="text-xl"
+        >
+          {{ isConnected ? '✓' : connectionStatus?.tested && !connectionStatus?.success ? '✗' : '🎥' }}
+        </span>
+        <div class="flex-1">
+          <p
+            class="font-medium"
+            :class="[
+              isConnected ? 'text-success' :
+              connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+              'text-content'
+            ]"
+          >
+            {{ isConnected ? 'Radarr Connected' :
+               connectionStatus?.tested && !connectionStatus?.success ? 'Connection Failed' :
+               isConfigured ? 'Not Tested' : 'Connect Radarr' }}
+          </p>
+          <p class="text-sm text-content-secondary">
+            {{ isConnected
+              ? 'Your Radarr instance is configured and verified.'
+              : connectionStatus?.tested && !connectionStatus?.success
+                ? connectionStatus?.message || 'Connection test failed. Check your URL and API token.'
+                : isConfigured
+                  ? 'Click "Test Connection" to verify your settings.'
+                  : 'Enter your Radarr URL and API token to enable movie management.' }}
+          </p>
+        </div>
+      </div>
+    </div>
 
     <!-- Connection Settings -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

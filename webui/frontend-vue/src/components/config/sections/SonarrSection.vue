@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import FormField from '../FormField.vue';
 import SectionHeader from '../SectionHeader.vue';
 import TestConnectionButton from '../TestConnectionButton.vue';
 import { Input, Checkbox, Select } from '@/components/common';
 import { useConfigSection } from '@/composables';
+import { useConnectionsStore } from '@/stores';
 
 interface SonarrConfig {
   url?: string;
@@ -35,6 +37,11 @@ const emit = defineEmits<{
 }>();
 
 const { updateField } = useConfigSection<SonarrConfig>(props, emit);
+const connections = useConnectionsStore();
+
+const isConfigured = computed(() => !!props.modelValue.url && !!props.modelValue.token);
+const connectionStatus = computed(() => connections.getStatus('sonarr'));
+const isConnected = computed(() => connections.isConnected('sonarr'));
 
 const monitorOptions = [
   { value: 'all', label: 'All Episodes' },
@@ -64,6 +71,52 @@ const seriesTypeOptions = [
       docs-url="https://kometa.wiki/en/latest/config/sonarr/"
       optional
     />
+
+    <!-- Connection Status -->
+    <div
+      class="p-4 rounded-lg"
+      :class="[
+        isConnected ? 'bg-success/10 border border-success/20' :
+        connectionStatus?.tested && !connectionStatus?.success ? 'bg-error/10 border border-error/20' :
+        'bg-surface-tertiary'
+      ]"
+    >
+      <div class="flex items-center gap-3">
+        <span
+          :class="[
+            isConnected ? 'text-success' :
+            connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+            'text-content-muted'
+          ]"
+          class="text-xl"
+        >
+          {{ isConnected ? '✓' : connectionStatus?.tested && !connectionStatus?.success ? '✗' : '📺' }}
+        </span>
+        <div class="flex-1">
+          <p
+            class="font-medium"
+            :class="[
+              isConnected ? 'text-success' :
+              connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+              'text-content'
+            ]"
+          >
+            {{ isConnected ? 'Sonarr Connected' :
+               connectionStatus?.tested && !connectionStatus?.success ? 'Connection Failed' :
+               isConfigured ? 'Not Tested' : 'Connect Sonarr' }}
+          </p>
+          <p class="text-sm text-content-secondary">
+            {{ isConnected
+              ? 'Your Sonarr instance is configured and verified.'
+              : connectionStatus?.tested && !connectionStatus?.success
+                ? connectionStatus?.message || 'Connection test failed. Check your URL and API token.'
+                : isConfigured
+                  ? 'Click "Test Connection" to verify your settings.'
+                  : 'Enter your Sonarr URL and API token to enable TV show management.' }}
+          </p>
+        </div>
+      </div>
+    </div>
 
     <!-- Connection Settings -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

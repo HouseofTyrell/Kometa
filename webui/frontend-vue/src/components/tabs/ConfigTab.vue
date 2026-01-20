@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { useConfigStore } from '@/stores';
+import { useConfigStore, useConnectionsStore } from '@/stores';
 import { useConfig, useSaveConfig, useValidateConfig, useCreateBackup, useConfigBackups, useRestoreBackup, useTestConnection } from '@/api';
+import type { TestableService } from '@/api';
 import { useToast, useConfirm } from '@/composables';
 import { Card, Button, Badge, Spinner, Modal } from '@/components/common';
 import { ConfigEditor, ValidationPanel } from '@/components/config';
 
 const config = useConfigStore();
+const connections = useConnectionsStore();
 const toast = useToast();
 const { confirmWarning } = useConfirm();
 
@@ -318,18 +320,21 @@ const handleRestore = async (filename: string) => {
 };
 
 // Test connection
-const handleTestConnection = async (service: string, config: Record<string, unknown>) => {
+const handleTestConnection = async (service: string, serviceConfig: Record<string, unknown>) => {
   try {
     const result = await testConnectionMutation.mutateAsync({
-      service: service as 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt' | 'notifiarr',
-      config,
+      service: service as TestableService,
+      config: serviceConfig,
     });
     if (result.success) {
+      connections.setConnectionStatus(service as TestableService, true, result.message);
       toast.success(`${service} connection successful`);
     } else {
+      connections.setConnectionStatus(service as TestableService, false, result.error || result.message);
       toast.error(`${service} connection failed: ${result.error || result.message}`);
     }
   } catch (err) {
+    connections.setConnectionStatus(service as TestableService, false, 'Connection test failed');
     toast.error(`Failed to test ${service} connection`);
   }
 };

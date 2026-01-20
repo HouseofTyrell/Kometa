@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import FormField from '../FormField.vue';
 import SectionHeader from '../SectionHeader.vue';
 import TestConnectionButton from '../TestConnectionButton.vue';
 import { Input, Select } from '@/components/common';
 import { useConfigSection } from '@/composables';
+import { useConnectionsStore } from '@/stores';
 
 interface TMDbConfig {
   apikey?: string;
@@ -23,6 +25,11 @@ const emit = defineEmits<{
 }>();
 
 const { config, updateField } = useConfigSection<TMDbConfig>(props, emit);
+const connections = useConnectionsStore();
+
+const isConfigured = computed(() => !!props.modelValue.apikey);
+const connectionStatus = computed(() => connections.getStatus('tmdb'));
+const isConnected = computed(() => connections.isConnected('tmdb'));
 
 const languages = [
   { value: 'en', label: 'English' },
@@ -59,6 +66,52 @@ const regions = [
       docs-url="https://kometa.wiki/en/latest/config/tmdb/"
       required
     />
+
+    <!-- Connection Status -->
+    <div
+      class="p-4 rounded-lg"
+      :class="[
+        isConnected ? 'bg-success/10 border border-success/20' :
+        connectionStatus?.tested && !connectionStatus?.success ? 'bg-error/10 border border-error/20' :
+        'bg-surface-tertiary'
+      ]"
+    >
+      <div class="flex items-center gap-3">
+        <span
+          :class="[
+            isConnected ? 'text-success' :
+            connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+            'text-content-muted'
+          ]"
+          class="text-xl"
+        >
+          {{ isConnected ? '✓' : connectionStatus?.tested && !connectionStatus?.success ? '✗' : '🎬' }}
+        </span>
+        <div class="flex-1">
+          <p
+            class="font-medium"
+            :class="[
+              isConnected ? 'text-success' :
+              connectionStatus?.tested && !connectionStatus?.success ? 'text-error' :
+              'text-content'
+            ]"
+          >
+            {{ isConnected ? 'TMDb Connected' :
+               connectionStatus?.tested && !connectionStatus?.success ? 'Connection Failed' :
+               isConfigured ? 'Not Tested' : 'Connect TMDb' }}
+          </p>
+          <p class="text-sm text-content-secondary">
+            {{ isConnected
+              ? 'Your TMDb API key is configured and verified.'
+              : connectionStatus?.tested && !connectionStatus?.success
+                ? connectionStatus?.message || 'Connection test failed. Check your API key.'
+                : isConfigured
+                  ? 'Click "Test Connection" to verify your settings.'
+                  : 'Enter your TMDb API key to enable metadata features.' }}
+          </p>
+        </div>
+      </div>
+    </div>
 
     <!-- API Key -->
     <FormField
