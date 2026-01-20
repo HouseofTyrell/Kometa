@@ -42,6 +42,7 @@ export {
   useTestAllConnections,
   useSettings,
   useUpdateSettings,
+  type TestableService,
   type TestConnectionParams,
 } from './media';
 

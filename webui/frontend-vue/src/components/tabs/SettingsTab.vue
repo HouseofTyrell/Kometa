@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useSettings, useTestConnection, useTestAllConnections } from '@/api';
+import { useSettings, useTestConnection, useTestAllConnections, type TestableService } from '@/api';
 import { useRunStore } from '@/stores';
 import { useToast } from '@/composables';
-import { Card, Button, Badge, Spinner, Checkbox, Input } from '@/components/common';
+import { Card, Button, Badge, Spinner, Checkbox } from '@/components/common';
 import SchedulerPanel from '@/components/config/SchedulerPanel.vue';
 import type { ConnectionTest } from '@/types';
 
@@ -19,24 +19,68 @@ const testAllMutation = useTestAllConnections();
 const connectionResults = ref<ConnectionTest[]>([]);
 const testingAll = ref(false);
 
-// Services to test
-const services = [
-  { id: 'plex', name: 'Plex', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z' },
-  { id: 'tmdb', name: 'TMDb', icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5' },
-  { id: 'radarr', name: 'Radarr', icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4' },
-  { id: 'sonarr', name: 'Sonarr', icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4' },
-  { id: 'tautulli', name: 'Tautulli', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-  { id: 'trakt', name: 'Trakt', icon: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z' },
+// Services to test - organized by category
+const serviceCategories = [
+  {
+    name: 'Media Servers',
+    services: [
+      { id: 'plex', name: 'Plex', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z' },
+      { id: 'tautulli', name: 'Tautulli', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+    ],
+  },
+  {
+    name: 'Media Managers',
+    services: [
+      { id: 'radarr', name: 'Radarr', icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4' },
+      { id: 'sonarr', name: 'Sonarr', icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4' },
+    ],
+  },
+  {
+    name: 'Metadata Sources',
+    services: [
+      { id: 'tmdb', name: 'TMDb', icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5' },
+      { id: 'omdb', name: 'OMDb', icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
+      { id: 'mdblist', name: 'MDBList', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
+      { id: 'trakt', name: 'Trakt', icon: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z' },
+    ],
+  },
+  {
+    name: 'Anime Sources',
+    services: [
+      { id: 'mal', name: 'MyAnimeList', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+      { id: 'anidb', name: 'AniDB', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+    ],
+  },
+  {
+    name: 'Notifications',
+    services: [
+      { id: 'notifiarr', name: 'Notifiarr', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
+      { id: 'gotify', name: 'Gotify', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
+      { id: 'ntfy', name: 'ntfy', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
+    ],
+  },
+  {
+    name: 'Other',
+    services: [
+      { id: 'github', name: 'GitHub', icon: 'M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z' },
+    ],
+  },
 ];
 
+// Track which service is currently being tested
+const testingService = ref<string | null>(null);
+
 // Test a single connection
-const testConnection = async (service: string) => {
+const testConnection = async (serviceId: string) => {
+  testingService.value = serviceId;
   try {
-    const result = await testConnectionMutation.mutateAsync(
-      service as 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt'
-    );
+    // For now, use an empty config - the backend will use the config file
+    const result = await testConnectionMutation.mutateAsync({
+      service: serviceId as TestableService,
+      config: {},
+    });
     // Update or add result
-    const index = connectionResults.value.findIndex((r) => r.service === service);
+    const index = connectionResults.value.findIndex((r) => r.service === serviceId);
     if (index >= 0) {
       connectionResults.value[index] = result;
     } else {
@@ -44,12 +88,14 @@ const testConnection = async (service: string) => {
     }
 
     if (result.success) {
-      toast.success(`${service} connection successful`);
+      toast.success(`${serviceId} connection successful`);
     } else {
-      toast.error(`${service} connection failed: ${result.message}`);
+      toast.error(`${serviceId} connection failed: ${result.message}`);
     }
   } catch (err) {
-    toast.error(`Failed to test ${service} connection`);
+    toast.error(`Failed to test ${serviceId} connection`);
+  } finally {
+    testingService.value = null;
   }
 };
 
@@ -178,55 +224,67 @@ const getConnectionResult = (serviceId: string) => {
           </Button>
         </template>
 
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div class="space-y-6">
+          <!-- Iterate over categories -->
           <div
-            v-for="service in services"
-            :key="service.id"
-            class="p-4 rounded-lg border border-border"
+            v-for="category in serviceCategories"
+            :key="category.name"
           >
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-2">
-                <svg
-                  class="w-5 h-5 text-content-secondary"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    :d="service.icon"
-                  />
-                </svg>
-                <span class="font-medium">{{ service.name }}</span>
-              </div>
-
-              <Badge
-                v-if="getConnectionResult(service.id)"
-                :variant="getConnectionResult(service.id)?.success ? 'success' : 'error'"
+            <h4 class="text-sm font-medium text-content-secondary mb-3">
+              {{ category.name }}
+            </h4>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div
+                v-for="service in category.services"
+                :key="service.id"
+                class="p-3 rounded-lg border border-border"
               >
-                {{ getConnectionResult(service.id)?.success ? 'OK' : 'Failed' }}
-              </Badge>
+                <div class="flex items-center justify-between mb-2">
+                  <div class="flex items-center gap-2">
+                    <svg
+                      class="w-4 h-4 text-content-secondary"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        :d="service.icon"
+                      />
+                    </svg>
+                    <span class="font-medium text-sm">{{ service.name }}</span>
+                  </div>
+
+                  <Badge
+                    v-if="getConnectionResult(service.id)"
+                    :variant="getConnectionResult(service.id)?.success ? 'success' : 'error'"
+                    size="sm"
+                  >
+                    {{ getConnectionResult(service.id)?.success ? 'OK' : 'Fail' }}
+                  </Badge>
+                </div>
+
+                <p
+                  v-if="getConnectionResult(service.id)?.message"
+                  class="text-xs text-content-muted mb-2 truncate"
+                  :title="getConnectionResult(service.id)?.message"
+                >
+                  {{ getConnectionResult(service.id)?.message }}
+                </p>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  full-width
+                  :loading="testingService === service.id"
+                  @click="testConnection(service.id)"
+                >
+                  Test
+                </Button>
+              </div>
             </div>
-
-            <p
-              v-if="getConnectionResult(service.id)?.message"
-              class="text-xs text-content-muted mb-3 truncate"
-              :title="getConnectionResult(service.id)?.message"
-            >
-              {{ getConnectionResult(service.id)?.message }}
-            </p>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              full-width
-              :loading="testConnectionMutation.isPending.value"
-              @click="testConnection(service.id)"
-            >
-              Test
-            </Button>
           </div>
         </div>
       </Card>

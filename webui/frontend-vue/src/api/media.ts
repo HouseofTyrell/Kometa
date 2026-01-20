@@ -90,10 +90,29 @@ export function useGenerateOverlayPreview() {
 // Connection Testing
 
 /**
+ * All testable services
+ */
+export type TestableService =
+  | 'plex'
+  | 'tmdb'
+  | 'radarr'
+  | 'sonarr'
+  | 'tautulli'
+  | 'trakt'
+  | 'mdblist'
+  | 'omdb'
+  | 'mal'
+  | 'anidb'
+  | 'github'
+  | 'notifiarr'
+  | 'gotify'
+  | 'ntfy';
+
+/**
  * Test connection request parameters for each service
  */
 export interface TestConnectionParams {
-  service: 'plex' | 'tmdb' | 'radarr' | 'sonarr' | 'tautulli' | 'trakt' | 'notifiarr';
+  service: TestableService;
   config: Record<string, unknown>;
 }
 
@@ -114,6 +133,9 @@ export function useTestConnection() {
           };
           break;
         case 'tmdb':
+        case 'mdblist':
+        case 'omdb':
+        case 'notifiarr':
           body = {
             apikey: config.apikey,
           };
@@ -137,9 +159,33 @@ export function useTestConnection() {
             client_secret: config.client_secret,
           };
           break;
-        case 'notifiarr':
+        case 'mal':
           body = {
-            apikey: config.apikey,
+            client_id: config.client_id,
+            client_secret: config.client_secret,
+          };
+          break;
+        case 'anidb':
+          body = {
+            username: config.username,
+            password: config.password,
+          };
+          break;
+        case 'github':
+          body = {
+            token: config.token,
+          };
+          break;
+        case 'gotify':
+          body = {
+            url: config.url,
+            token: config.token,
+          };
+          break;
+        case 'ntfy':
+          body = {
+            url: config.url || 'https://ntfy.sh',
+            topic: config.topic,
           };
           break;
       }
