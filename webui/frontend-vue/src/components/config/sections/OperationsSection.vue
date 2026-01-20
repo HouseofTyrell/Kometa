@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import FormField from '../FormField.vue';
-import { Checkbox, Card, Select } from '@/components/common';
+import { Checkbox, Select, Input, Button } from '@/components/common';
 
 interface OperationsConfig {
   // Mass Updates
@@ -90,6 +90,58 @@ const posterSources = [
   { value: 'lock', label: 'Lock Current' },
   { value: 'unlock', label: 'Unlock' },
 ];
+
+// Genre Mapper state
+const newGenreFrom = ref('');
+const newGenreTo = ref('');
+
+function getGenreMapperEntries(): [string, string][] {
+  const mapper = props.modelValue.genre_mapper || {};
+  return Object.entries(mapper);
+}
+
+function addGenreMapping() {
+  if (!newGenreFrom.value.trim() || !newGenreTo.value.trim()) return;
+
+  const mapper = { ...(props.modelValue.genre_mapper || {}) };
+  mapper[newGenreFrom.value.trim()] = newGenreTo.value.trim();
+  emit('update:modelValue', { ...props.modelValue, genre_mapper: mapper });
+  newGenreFrom.value = '';
+  newGenreTo.value = '';
+}
+
+function removeGenreMapping(key: string) {
+  const mapper = { ...(props.modelValue.genre_mapper || {}) };
+  delete mapper[key];
+  const newMapper = Object.keys(mapper).length > 0 ? mapper : undefined;
+  emit('update:modelValue', { ...props.modelValue, genre_mapper: newMapper });
+}
+
+// Content Rating Mapper state
+const newContentRatingFrom = ref('');
+const newContentRatingTo = ref('');
+
+function getContentRatingMapperEntries(): [string, string][] {
+  const mapper = props.modelValue.content_rating_mapper || {};
+  return Object.entries(mapper);
+}
+
+function addContentRatingMapping() {
+  if (!newContentRatingFrom.value.trim() || !newContentRatingTo.value.trim()) return;
+
+  const mapper = { ...(props.modelValue.content_rating_mapper || {}) };
+  mapper[newContentRatingFrom.value.trim()] = newContentRatingTo.value.trim();
+  emit('update:modelValue', { ...props.modelValue, content_rating_mapper: mapper });
+  newContentRatingFrom.value = '';
+  newContentRatingTo.value = '';
+}
+
+function removeContentRatingMapping(key: string) {
+  const mapper = { ...(props.modelValue.content_rating_mapper || {}) };
+  delete mapper[key];
+  const newMapper = Object.keys(mapper).length > 0 ? mapper : undefined;
+  emit('update:modelValue', { ...props.modelValue, content_rating_mapper: newMapper });
+}
 </script>
 
 <template>
@@ -288,6 +340,130 @@ const posterSources = [
             @input="updateField('delete_collections_with_less', Number(($event.target as HTMLInputElement).value))"
           />
         </FormField>
+      </div>
+    </div>
+
+    <!-- Genre Mapper -->
+    <div class="border-t border-border pt-6">
+      <h4 class="font-medium mb-2 flex items-center gap-2">
+        <span>🎭</span> Genre Mapper
+      </h4>
+      <p class="text-sm text-content-secondary mb-4">
+        Map genres from one value to another (e.g., "Sci-Fi" → "Science Fiction")
+      </p>
+
+      <!-- Existing mappings -->
+      <div
+        v-if="getGenreMapperEntries().length > 0"
+        class="space-y-2 mb-4"
+      >
+        <div
+          v-for="[from, to] in getGenreMapperEntries()"
+          :key="from"
+          class="flex items-center gap-2 p-2 rounded bg-surface-secondary"
+        >
+          <span class="flex-1 font-mono text-sm truncate">{{ from }}</span>
+          <svg class="w-4 h-4 text-content-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+          <span class="flex-1 font-mono text-sm truncate text-kometa-gold">{{ to }}</span>
+          <button
+            class="p-1 rounded hover:bg-error/20 text-content-secondary hover:text-error transition-colors"
+            title="Remove mapping"
+            @click="removeGenreMapping(from)"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Add new mapping -->
+      <div class="flex items-center gap-2">
+        <Input
+          v-model="newGenreFrom"
+          placeholder="From genre..."
+          class="flex-1"
+        />
+        <svg class="w-4 h-4 text-content-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+        </svg>
+        <Input
+          v-model="newGenreTo"
+          placeholder="To genre..."
+          class="flex-1"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          :disabled="!newGenreFrom.trim() || !newGenreTo.trim()"
+          @click="addGenreMapping"
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+
+    <!-- Content Rating Mapper -->
+    <div class="border-t border-border pt-6">
+      <h4 class="font-medium mb-2 flex items-center gap-2">
+        <span>📊</span> Content Rating Mapper
+      </h4>
+      <p class="text-sm text-content-secondary mb-4">
+        Map content ratings from one value to another (e.g., "R" → "TV-MA")
+      </p>
+
+      <!-- Existing mappings -->
+      <div
+        v-if="getContentRatingMapperEntries().length > 0"
+        class="space-y-2 mb-4"
+      >
+        <div
+          v-for="[from, to] in getContentRatingMapperEntries()"
+          :key="from"
+          class="flex items-center gap-2 p-2 rounded bg-surface-secondary"
+        >
+          <span class="flex-1 font-mono text-sm truncate">{{ from }}</span>
+          <svg class="w-4 h-4 text-content-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+          <span class="flex-1 font-mono text-sm truncate text-kometa-gold">{{ to }}</span>
+          <button
+            class="p-1 rounded hover:bg-error/20 text-content-secondary hover:text-error transition-colors"
+            title="Remove mapping"
+            @click="removeContentRatingMapping(from)"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Add new mapping -->
+      <div class="flex items-center gap-2">
+        <Input
+          v-model="newContentRatingFrom"
+          placeholder="From rating..."
+          class="flex-1"
+        />
+        <svg class="w-4 h-4 text-content-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+        </svg>
+        <Input
+          v-model="newContentRatingTo"
+          placeholder="To rating..."
+          class="flex-1"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          :disabled="!newContentRatingFrom.trim() || !newContentRatingTo.trim()"
+          @click="addContentRatingMapping"
+        >
+          Add
+        </Button>
       </div>
     </div>
   </div>
