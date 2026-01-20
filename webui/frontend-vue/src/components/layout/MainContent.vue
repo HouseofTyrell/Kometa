@@ -10,6 +10,7 @@ import RunTab from '@/components/tabs/RunTab.vue';
 import LogsTab from '@/components/tabs/LogsTab.vue';
 import HistoryTab from '@/components/tabs/HistoryTab.vue';
 import MediaTab from '@/components/tabs/MediaTab.vue';
+import MetadataTab from '@/components/tabs/MetadataTab.vue';
 import OverlaysTab from '@/components/tabs/OverlaysTab.vue';
 import SettingsTab from '@/components/tabs/SettingsTab.vue';
 
@@ -24,6 +25,7 @@ const tabs = {
   logs: LogsTab,
   history: HistoryTab,
   media: MediaTab,
+  metadata: MetadataTab,
   overlays: OverlaysTab,
   settings: SettingsTab,
 };

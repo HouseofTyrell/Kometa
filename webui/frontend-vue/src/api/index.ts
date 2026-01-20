@@ -72,3 +72,15 @@ export {
   type PlaylistDefinition,
   type SavePlaylistParams,
 } from './playlists';
+
+// Export metadata API
+export {
+  metadataKeys,
+  useMetadataBrowse,
+  useMetadataItem,
+  useGenerateMetadataYaml,
+  type MetadataBrowseParams,
+  type MetadataItem,
+  type MetadataBrowseResponse,
+  type MetadataItemDetail,
+} from './metadata';

@@ -422,6 +422,7 @@ export type TabId =
   | 'logs'
   | 'history'
   | 'media'
+  | 'metadata'
   | 'overlays'
   | 'settings';
 
