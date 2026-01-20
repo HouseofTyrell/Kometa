@@ -61,3 +61,14 @@ export {
   useStopScheduler,
   type SchedulerStatus,
 } from './scheduler';
+
+// Export playlists API
+export {
+  playlistKeys,
+  usePlaylists,
+  useSavePlaylist,
+  type PlaylistFile,
+  type PlaylistBuilder,
+  type PlaylistDefinition,
+  type SavePlaylistParams,
+} from './playlists';

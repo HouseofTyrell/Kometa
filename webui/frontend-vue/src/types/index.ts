@@ -417,6 +417,7 @@ export type TabId =
   | 'dashboard'
   | 'config'
   | 'collections'
+  | 'playlists'
   | 'run'
   | 'logs'
   | 'history'

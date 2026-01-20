@@ -5,6 +5,7 @@ import { useUIStore } from '@/stores';
 import DashboardTab from '@/components/tabs/DashboardTab.vue';
 import ConfigTab from '@/components/tabs/ConfigTab.vue';
 import CollectionsTab from '@/components/tabs/CollectionsTab.vue';
+import PlaylistsTab from '@/components/tabs/PlaylistsTab.vue';
 import RunTab from '@/components/tabs/RunTab.vue';
 import LogsTab from '@/components/tabs/LogsTab.vue';
 import HistoryTab from '@/components/tabs/HistoryTab.vue';
@@ -18,6 +19,7 @@ const tabs = {
   dashboard: DashboardTab,
   config: ConfigTab,
   collections: CollectionsTab,
+  playlists: PlaylistsTab,
   run: RunTab,
   logs: LogsTab,
   history: HistoryTab,
