@@ -51,11 +51,34 @@ class VariableResolution:
 
 
 @dataclass
+class GroupDecision:
+    """Tracks a group winner decision."""
+    group_name: str
+    winner: str
+    winner_weight: int
+    losers: List[Dict[str, Any]]  # [{name, weight}, ...]
+    reason: str
+
+
+@dataclass
+class QueueAssignment:
+    """Tracks a queue position assignment."""
+    queue_name: str
+    position_index: int
+    overlay_name: str
+    weight: int
+    position_settings: Dict[str, Any]
+
+
+@dataclass
 class PreviewParity:
     """Tracks overall preview parity status."""
     status: ParityStatus = ParityStatus.EXACT
     details: List[str] = field(default_factory=list)
     variable_log: List[VariableResolution] = field(default_factory=list)
+    group_decisions: List[GroupDecision] = field(default_factory=list)
+    queue_assignments: List[QueueAssignment] = field(default_factory=list)
+    suppressed_overlays: List[Dict[str, str]] = field(default_factory=list)
 
     def downgrade(self, new_status: ParityStatus, reason: str):
         """Downgrade parity status if new status is worse."""
@@ -74,12 +97,40 @@ class PreviewParity:
             is_real=is_real, requires_api=requires_api
         ))
 
+    def log_group_decision(self, group_name: str, winner: str, winner_weight: int,
+                           losers: List[Dict[str, Any]], reason: str):
+        """Log a group winner decision."""
+        self.group_decisions.append(GroupDecision(
+            group_name=group_name, winner=winner, winner_weight=winner_weight,
+            losers=losers, reason=reason
+        ))
+
+    def log_queue_assignment(self, queue_name: str, position_index: int,
+                             overlay_name: str, weight: int,
+                             position_settings: Dict[str, Any]):
+        """Log a queue position assignment."""
+        self.queue_assignments.append(QueueAssignment(
+            queue_name=queue_name, position_index=position_index,
+            overlay_name=overlay_name, weight=weight,
+            position_settings=position_settings
+        ))
+
+    def log_suppressed(self, suppressed_name: str, suppressor_name: str):
+        """Log that an overlay was suppressed by another."""
+        self.suppressed_overlays.append({
+            "suppressed": suppressed_name,
+            "suppressor": suppressor_name
+        })
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "status": self.status.value,
             "details": self.details,
-            "variable_log": [asdict(v) for v in self.variable_log]
+            "variable_log": [asdict(v) for v in self.variable_log],
+            "group_decisions": [asdict(g) for g in self.group_decisions],
+            "queue_assignments": [asdict(q) for q in self.queue_assignments],
+            "suppressed_overlays": self.suppressed_overlays
         }
 
 
@@ -291,6 +342,7 @@ class OverlayPreviewManager:
         result = {
             "overlays": [],
             "queues": [],
+            "queue_positions": {},  # queue_name -> list of position dicts for generate_preview
             "groups": {},  # Group name -> list of overlay names
             "has_templates": False,
             "template_info": {}
@@ -306,13 +358,40 @@ class OverlayPreviewManager:
         if has_local_templates:
             result["template_info"]["local_count"] = len(data["templates"])
 
-        # Extract queues
+        # Extract queues with full position data
         if "queues" in data:
             for queue_name, queue_data in data["queues"].items():
+                # Handle different queue formats
+                positions = []
+
+                if isinstance(queue_data, list):
+                    # Simple list of positions
+                    positions = queue_data
+                elif isinstance(queue_data, dict):
+                    # Queue with settings
+                    if "settings" in queue_data and isinstance(queue_data["settings"], dict):
+                        pos_data = queue_data["settings"].get("position", [])
+                        if isinstance(pos_data, list):
+                            positions = pos_data
+                        elif isinstance(pos_data, str):
+                            # Named position reference - try to resolve
+                            for key, val in queue_data.items():
+                                if key != "settings" and isinstance(val, list):
+                                    positions = val
+                                    break
+                    else:
+                        # Check for named position lists
+                        for key, val in queue_data.items():
+                            if key != "settings" and isinstance(val, list):
+                                positions = val
+                                break
+
                 result["queues"].append({
                     "name": queue_name,
-                    "positions": queue_data.get("settings", {}).get("position", [])
+                    "positions": positions
                 })
+                # Also store in format for generate_preview
+                result["queue_positions"][queue_name] = positions
 
         # Process overlays - use template expansion if templates are present
         if result["has_templates"]:
@@ -684,12 +763,185 @@ class OverlayPreviewManager:
             # For now, return None for custom paths
             return None
 
+    def _preprocess_overlays(
+        self,
+        overlays: List[Dict],
+        queues: Dict[str, List[Dict]],
+        parity: PreviewParity
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Preprocess overlays to apply Kometa's group, queue, and suppress logic.
+
+        This implements the same overlay filtering as Kometa's overlays.py:
+        1. suppress_overlays: Remove overlays that are suppressed by others
+        2. groups: Only keep the highest-weight overlay in each group
+        3. queues: Assign queue positions to queued overlays (highest weight first)
+
+        Args:
+            overlays: List of overlay configurations
+            queues: Queue definitions mapping queue names to position lists
+            parity: Parity tracking object
+
+        Returns:
+            Tuple of (processed_overlays, excluded_overlays)
+        """
+        if not overlays:
+            return [], []
+
+        # Build lookup by name for suppress logic
+        overlay_by_name = {o.get("name"): o for o in overlays}
+        overlay_names = set(overlay_by_name.keys())
+
+        # Track which overlays to include
+        included = set(overlay_names)
+        excluded = []
+
+        # Step 1: Apply suppress_overlays
+        for overlay in overlays:
+            suppress_list = overlay.get("suppress_overlays") or []
+            if isinstance(suppress_list, str):
+                suppress_list = [suppress_list]
+
+            for suppress_name in suppress_list:
+                if suppress_name in included:
+                    included.remove(suppress_name)
+                    excluded.append(overlay_by_name[suppress_name])
+                    parity.log_suppressed(suppress_name, overlay.get("name", "unknown"))
+                    parity.downgrade(
+                        ParityStatus.EXACT_FOR_SELECTED,
+                        f"'{suppress_name}' suppressed by '{overlay.get('name')}'"
+                    )
+
+        # Step 2: Apply group logic - only highest weight wins
+        groups: Dict[str, Dict[str, int]] = {}  # group_name -> {overlay_name: weight}
+
+        for overlay in overlays:
+            name = overlay.get("name")
+            if name not in included:
+                continue
+
+            group = overlay.get("group")
+            weight = overlay.get("weight", 0)
+
+            if group:
+                if group not in groups:
+                    groups[group] = {}
+                groups[group][name] = weight
+
+        # Determine group winners
+        for group_name, members in groups.items():
+            if len(members) <= 1:
+                continue
+
+            # Find highest weight (winner)
+            winner = max(members, key=lambda n: members[n])
+            winner_weight = members[winner]
+
+            # Record losers and remove them
+            losers = []
+            for name, weight in members.items():
+                if name != winner:
+                    if name in included:
+                        included.remove(name)
+                        excluded.append(overlay_by_name[name])
+                    losers.append({"name": name, "weight": weight})
+
+            parity.log_group_decision(
+                group_name=group_name,
+                winner=winner,
+                winner_weight=winner_weight,
+                losers=losers,
+                reason=f"Highest weight ({winner_weight}) in group '{group_name}'"
+            )
+            parity.downgrade(
+                ParityStatus.EXACT_FOR_SELECTED,
+                f"Group '{group_name}': winner selected by weight"
+            )
+
+        # Step 3: Apply queue logic - assign positions to queued overlays
+        queue_overlays: Dict[str, List[Tuple[int, str, Dict]]] = {}  # queue -> [(weight, name, overlay)]
+
+        for overlay in overlays:
+            name = overlay.get("name")
+            if name not in included:
+                continue
+
+            queue_name = overlay.get("queue")
+            weight = overlay.get("weight", 0)
+
+            if queue_name:
+                if queue_name not in queue_overlays:
+                    queue_overlays[queue_name] = []
+                queue_overlays[queue_name].append((weight, name, overlay))
+
+        # Process queues: sort by weight descending, assign positions
+        for queue_name, queue_members in queue_overlays.items():
+            # Sort by weight (highest first)
+            sorted_members = sorted(queue_members, key=lambda x: x[0], reverse=True)
+
+            # Get queue positions (if queue is defined)
+            positions = queues.get(queue_name, [])
+
+            for idx, (weight, name, overlay) in enumerate(sorted_members):
+                if positions and idx < len(positions):
+                    # Assign position from queue definition
+                    pos_settings = positions[idx]
+                    overlay["_queue_position"] = pos_settings
+                    overlay["horizontal_align"] = pos_settings.get(
+                        "horizontal_align", overlay.get("horizontal_align")
+                    )
+                    overlay["vertical_align"] = pos_settings.get(
+                        "vertical_align", overlay.get("vertical_align")
+                    )
+                    overlay["horizontal_offset"] = pos_settings.get(
+                        "horizontal_offset", overlay.get("horizontal_offset")
+                    )
+                    overlay["vertical_offset"] = pos_settings.get(
+                        "vertical_offset", overlay.get("vertical_offset")
+                    )
+
+                    parity.log_queue_assignment(
+                        queue_name=queue_name,
+                        position_index=idx,
+                        overlay_name=name,
+                        weight=weight,
+                        position_settings=pos_settings
+                    )
+                elif positions:
+                    # No more positions available - overlay gets dropped
+                    if name in included:
+                        included.remove(name)
+                        excluded.append(overlay)
+                    parity.downgrade(
+                        ParityStatus.EXACT_FOR_SELECTED,
+                        f"Queue '{queue_name}': overlay '{name}' exceeded position limit"
+                    )
+                else:
+                    # Queue not defined in our queues dict - just log it
+                    parity.log_queue_assignment(
+                        queue_name=queue_name,
+                        position_index=idx,
+                        overlay_name=name,
+                        weight=weight,
+                        position_settings={}
+                    )
+                    parity.downgrade(
+                        ParityStatus.RISK,
+                        f"Queue '{queue_name}' positions not provided - using overlay defaults"
+                    )
+
+        # Build final overlay list preserving original order
+        processed = [o for o in overlays if o.get("name") in included]
+
+        return processed, excluded
+
     def generate_preview(
         self,
         overlays: List[Dict],
         canvas_type: str = "portrait",
         sample_poster: Optional[str] = None,
-        media_metadata: Optional[Dict[str, Any]] = None
+        media_metadata: Optional[Dict[str, Any]] = None,
+        queues: Optional[Dict[str, List[Dict]]] = None
     ) -> Dict[str, Any]:
         """
         Generate a preview of overlays on a canvas with parity tracking.
@@ -699,11 +951,13 @@ class OverlayPreviewManager:
             canvas_type: "portrait", "landscape", or "square"
             sample_poster: Optional path to a poster image file
             media_metadata: Optional metadata from Plex item for text substitution
+            queues: Optional queue definitions for position assignment
 
         Returns preview data including:
         - Base64 encoded preview image
         - Overlay positions and dimensions
         - Parity status and variable resolution log
+        - Group/queue decisions and suppressed overlays
         - Warnings/errors
         """
         # Initialize parity tracking
@@ -729,6 +983,11 @@ class OverlayPreviewManager:
         else:
             canvas_size = CANVAS_PORTRAIT
 
+        # Preprocess overlays: apply group/queue/suppress logic
+        processed_overlays, excluded_overlays = self._preprocess_overlays(
+            overlays, queues or {}, parity
+        )
+
         # Determine preview source for parity tracking
         has_real_poster = False
         has_real_metadata = bool(media_metadata and media_metadata.get('title'))
@@ -750,7 +1009,7 @@ class OverlayPreviewManager:
         preview_overlays = []
         warnings = []
 
-        for overlay in overlays:
+        for overlay in processed_overlays:
             try:
                 result = self._render_overlay(canvas, overlay, parity)
                 preview_overlays.append(result)
@@ -775,6 +1034,10 @@ class OverlayPreviewManager:
             "image": f"data:image/png;base64,{base64_image}",
             "canvas_size": canvas_size,
             "overlays": preview_overlays,
+            "excluded_overlays": [
+                {"name": o.get("name"), "reason": "group/queue/suppress logic"}
+                for o in excluded_overlays
+            ],
             "warnings": warnings,
             "parity": parity.to_dict()
         }
