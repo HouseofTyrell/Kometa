@@ -338,6 +338,30 @@ class ConfigManager:
 
         return {"restored_from": backup_name}
 
+    def delete_backup(self, backup_name: str) -> bool:
+        """Delete a specific backup file.
+
+        Args:
+            backup_name: Name of the backup file to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            FileNotFoundError: If backup doesn't exist
+        """
+        backup_path = self.backup_dir / backup_name
+
+        if not backup_path.exists():
+            raise FileNotFoundError(f"Backup not found: {backup_name}")
+
+        # Safety check: ensure we're only deleting files in the backup directory
+        if not backup_path.resolve().parent == self.backup_dir.resolve():
+            raise ValueError("Invalid backup path")
+
+        backup_path.unlink()
+        return True
+
     def generate_run_plan(self) -> Dict[str, Any]:
         """Generate a run plan preview based on current config."""
         plan = {
