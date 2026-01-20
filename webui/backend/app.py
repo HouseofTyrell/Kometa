@@ -200,6 +200,47 @@ async def get_settings():
     }
 
 
+class SettingsUpdateRequest(BaseModel):
+    apply_enabled: Optional[bool] = None
+    password: Optional[str] = None
+
+
+@app.put("/api/settings")
+async def update_settings(request: SettingsUpdateRequest):
+    """Update Web UI settings.
+
+    Note: apply_enabled can be toggled at runtime.
+    Password changes require container/service restart with updated environment variable.
+    """
+    global APPLY_ENABLED
+
+    updated = []
+
+    if request.apply_enabled is not None:
+        APPLY_ENABLED = request.apply_enabled
+        # Also update the run manager's setting
+        if run_manager:
+            run_manager.apply_enabled = request.apply_enabled
+        updated.append("apply_enabled")
+        logger.info(f"Apply mode {'enabled' if APPLY_ENABLED else 'disabled'} via API")
+
+    if request.password is not None:
+        # Password changes cannot be applied at runtime for security reasons
+        # They require setting the KOMETA_UI_PASSWORD environment variable
+        return {
+            "success": False,
+            "message": "Password changes require restarting with updated KOMETA_UI_PASSWORD environment variable",
+            "updated": updated
+        }
+
+    return {
+        "success": True,
+        "message": f"Settings updated: {', '.join(updated)}" if updated else "No changes",
+        "updated": updated,
+        "apply_enabled": APPLY_ENABLED
+    }
+
+
 @app.get("/api/libraries")
 async def get_libraries():
     """Get list of libraries from config."""
@@ -338,6 +379,20 @@ async def restore_backup(backup_name: str):
         return {"success": True, "restored_from": backup_name}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Backup not found: {backup_name}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/config/backups/{backup_name}")
+async def delete_backup(backup_name: str):
+    """Delete a specific config backup."""
+    try:
+        config_manager.delete_backup(backup_name)
+        return {"success": True, "deleted": backup_name}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Backup not found: {backup_name}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -609,6 +664,18 @@ async def get_run_diff(run_id: str):
         "collections": collection_summary[:50],  # Limit to top 50
         "operations": operations[:100],  # Limit to first 100 operations
     }
+
+
+@app.delete("/api/runs/{run_id}")
+async def delete_run(run_id: str):
+    """Delete a run from history and its associated log file."""
+    try:
+        await run_manager.delete_run(run_id)
+        return {"success": True, "deleted": run_id}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
@@ -902,6 +969,27 @@ async def get_poster(
             raise HTTPException(status_code=404, detail="Poster not found")
 
         return {"poster": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/media/{media_id}")
+async def get_media_item(media_id: str):
+    """Get detailed information about a specific media item.
+
+    Args:
+        media_id: The Plex rating key for the media item
+    """
+    try:
+        # Use the poster_fetcher's Plex item metadata method
+        metadata = poster_fetcher.get_plex_item_metadata(media_id)
+
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"Media item not found: {media_id}")
+
+        return metadata
     except HTTPException:
         raise
     except Exception as e:
@@ -1930,32 +2018,109 @@ async def get_builder_sources():
 @app.get("/api/playlists")
 async def get_playlists():
     """Get existing playlists from playlist files."""
+    from io import StringIO
+
     playlist_files = config_manager.get_playlist_files()
-    return {"playlists": [], "files": playlist_files}
+    playlists = []
+
+    # Parse each playlist file to extract playlist definitions
+    for pf in playlist_files:
+        file_path = pf.get("file_path")
+        if file_path and Path(file_path).exists():
+            try:
+                content = Path(file_path).read_text(encoding="utf-8")
+                yaml = config_manager.yaml
+                parsed = yaml.load(StringIO(content))
+
+                if parsed and isinstance(parsed, dict):
+                    # Look for playlists key
+                    playlist_defs = parsed.get("playlists", parsed)
+                    if isinstance(playlist_defs, dict):
+                        for playlist_name, playlist_config in playlist_defs.items():
+                            if isinstance(playlist_config, dict):
+                                playlists.append({
+                                    "name": playlist_name,
+                                    "source_file": pf.get("path"),
+                                    "library": pf.get("library"),
+                                    "libraries": playlist_config.get("libraries"),
+                                    "sync_to_users": playlist_config.get("sync_to_users"),
+                                    "builders": _extract_builders(playlist_config),
+                                })
+            except Exception as e:
+                logger.warning(f"Failed to parse playlist file {file_path}: {e}")
+
+    return {"playlists": playlists, "files": playlist_files}
+
+
+def _extract_builders(playlist_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract builder configurations from a playlist config."""
+    builders = []
+    # Known builder keys
+    builder_keys = [
+        "plex_all", "plex_search", "plex_pilots", "plex_watchlist",
+        "tmdb_popular", "tmdb_trending", "tmdb_discover", "tmdb_list",
+        "trakt_list", "trakt_watchlist", "trakt_trending", "trakt_popular",
+        "imdb_list", "imdb_chart", "letterboxd_list", "mdblist_list",
+        "tautulli_popular", "tautulli_watched", "anilist_popular",
+    ]
+
+    for key in builder_keys:
+        if key in playlist_config:
+            config = playlist_config[key]
+            builders.append({
+                "source": key,
+                "config": config if isinstance(config, dict) else {}
+            })
+
+    return builders
 
 
 @app.post("/api/playlists/save")
 async def save_playlist(request: Dict[str, Any]):
     """Save a playlist definition to a YAML file."""
+    from io import StringIO
+
     name = request.get("name", "New Playlist")
-    file_path = f"config/playlists.yml"
+    if not name or not name.strip():
+        raise HTTPException(status_code=400, detail="Playlist name is required")
+
+    # Sanitize filename
+    safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in name)
+    file_path = CONFIG_DIR / f"playlists-{safe_name.lower().replace(' ', '-')}.yml"
 
     # Build playlist config from request
     playlist_config = {}
-    if "libraries" in request:
+    if request.get("libraries"):
         playlist_config["libraries"] = request["libraries"]
-    if "sync_to_users" in request:
+    if request.get("sync_to_users"):
         playlist_config["sync_to_users"] = request["sync_to_users"]
-    if "builders" in request:
+
+    # Add builders
+    if request.get("builders"):
         for builder in request["builders"]:
             source = builder.get("source", "plex_all")
-            playlist_config[source] = builder.get("config", True)
+            config = builder.get("config", {})
+            # If config is empty dict, use True for simple builders
+            playlist_config[source] = config if config else True
 
-    return {
-        "success": True,
-        "message": f"Playlist '{name}' configuration prepared",
-        "config": playlist_config
-    }
+    # Wrap in playlists key with the playlist name
+    full_config = {"playlists": {name: playlist_config}}
+
+    # Write to file
+    try:
+        yaml = config_manager.yaml
+        stream = StringIO()
+        yaml.dump(full_config, stream)
+        file_path.write_text(stream.getvalue(), encoding="utf-8")
+
+        return {
+            "success": True,
+            "message": f"Playlist '{name}' saved to {file_path.name}",
+            "path": str(file_path),
+            "config": playlist_config
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save playlist: {e}")
 
 
 # --- Settings Endpoints ---

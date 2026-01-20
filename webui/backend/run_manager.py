@@ -366,6 +366,38 @@ class RunManager:
                 "error_message": row["error_message"]
             }
 
+    async def delete_run(self, run_id: str) -> bool:
+        """Delete a run from history and its associated log file.
+
+        Args:
+            run_id: The ID of the run to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            FileNotFoundError: If run doesn't exist
+        """
+        # Get the run first to find the log path
+        run = await self.get_run(run_id)
+        if not run:
+            raise FileNotFoundError(f"Run not found: {run_id}")
+
+        # Delete the log file if it exists
+        if run.get("log_path"):
+            log_path = Path(run["log_path"])
+            if log_path.exists():
+                log_path.unlink()
+
+        # Delete from database
+        await self._db.execute(
+            "DELETE FROM runs WHERE id = ?",
+            (run_id,)
+        )
+        await self._db.commit()
+
+        return True
+
     async def get_logs(self, run_id: str, tail: int = 1000) -> List[str]:
         """Get logs for a specific run."""
         run = await self.get_run(run_id)
