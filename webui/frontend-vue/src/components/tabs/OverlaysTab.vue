@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed } from 'vue';
 import { useOverlayList, useGenerateOverlayPreview, useMediaSearch } from '@/api';
 import { useToast } from '@/composables';
-import { Card, Button, Input, Select, Spinner, Badge } from '@/components/common';
+import { Card, Button, Input, Select, Spinner, Badge, ParityStatusBadge } from '@/components/common';
+import type { OverlayPreviewResponse } from '@/types';
 
 const toast = useToast();
 
@@ -68,8 +69,9 @@ const groupedOverlays = computed(() => {
 const selectedOverlay = ref('');
 const searchQuery = ref('');
 const selectedMedia = ref('');
-const previewUrl = ref('');
+const previewResult = ref<OverlayPreviewResponse | null>(null);
 const isGenerating = ref(false);
+const showParityDetails = ref(false);
 
 // Media search for preview
 const { data: mediaResults, isLoading: mediaLoading } = useMediaSearch({
@@ -80,6 +82,12 @@ const { data: mediaResults, isLoading: mediaLoading } = useMediaSearch({
 // Generate preview mutation
 const generatePreview = useGenerateOverlayPreview();
 
+// Computed preview URL (backwards compatible)
+const previewUrl = computed(() => previewResult.value?.image || '');
+
+// Computed parity info
+const parityInfo = computed(() => previewResult.value?.parity);
+
 // Handle generate preview
 const handleGeneratePreview = async () => {
   if (!selectedOverlay.value || !selectedMedia.value) {
@@ -88,19 +96,28 @@ const handleGeneratePreview = async () => {
   }
 
   isGenerating.value = true;
+  previewResult.value = null;
 
   try {
     const result = await generatePreview.mutateAsync({
       overlay_name: selectedOverlay.value,
       media_id: selectedMedia.value,
     });
-    previewUrl.value = result.preview_url;
+    // The API returns the full preview response now
+    previewResult.value = result as unknown as OverlayPreviewResponse;
     toast.success('Preview generated');
   } catch (err) {
     toast.error('Failed to generate preview');
   } finally {
     isGenerating.value = false;
   }
+};
+
+// Get variable source icon
+const getSourceIcon = (source: string) => {
+  if (source.includes('Plex')) return 'M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3';
+  if (source.includes('Sample')) return 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z';
+  return 'M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21';
 };
 
 // Get display name for overlay (remove group prefix)
@@ -328,35 +345,179 @@ const getDisplayName = (name: string) => {
         <!-- Preview -->
         <Card class="flex-1 flex flex-col min-h-0">
           <template #header>
-            <span class="font-medium">Preview</span>
+            <div class="flex items-center justify-between w-full">
+              <span class="font-medium">Preview</span>
+              <ParityStatusBadge
+                v-if="parityInfo"
+                :status="parityInfo.status"
+              />
+            </div>
           </template>
 
-          <div class="flex-1 flex items-center justify-center bg-surface-tertiary rounded-lg min-h-[200px]">
-            <img
-              v-if="previewUrl"
-              :src="previewUrl"
-              alt="Overlay preview"
-              class="max-w-full max-h-full object-contain rounded"
-            >
-            <div
-              v-else
-              class="text-center text-content-muted"
-            >
-              <svg
-                class="w-12 h-12 mx-auto mb-2 opacity-50"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+          <div class="flex-1 flex flex-col gap-3">
+            <!-- Preview Image -->
+            <div class="flex-1 flex items-center justify-center bg-surface-tertiary rounded-lg min-h-[200px]">
+              <img
+                v-if="previewUrl"
+                :src="previewUrl"
+                alt="Overlay preview"
+                class="max-w-full max-h-full object-contain rounded"
               >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                />
-              </svg>
-              <p class="text-sm">Select an overlay and media</p>
-              <p class="text-xs">to generate a preview</p>
+              <div
+                v-else
+                class="text-center text-content-muted"
+              >
+                <svg
+                  class="w-12 h-12 mx-auto mb-2 opacity-50"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <p class="text-sm">Select an overlay and media</p>
+                <p class="text-xs">to generate a preview</p>
+              </div>
+            </div>
+
+            <!-- Parity Details (collapsible) -->
+            <div v-if="parityInfo" class="border-t border-border pt-3">
+              <button
+                type="button"
+                class="w-full flex items-center justify-between text-sm text-content-muted hover:text-content transition-colors"
+                @click="showParityDetails = !showParityDetails"
+              >
+                <span class="flex items-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Preview Parity Details
+                </span>
+                <svg
+                  :class="['w-4 h-4 transition-transform', showParityDetails ? 'rotate-180' : '']"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              <div v-if="showParityDetails" class="mt-3 space-y-3 text-xs">
+                <!-- Parity Status Details -->
+                <div v-if="parityInfo.details.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Status Notes</h5>
+                  <ul class="space-y-1 text-content-muted">
+                    <li
+                      v-for="(detail, idx) in parityInfo.details"
+                      :key="idx"
+                      class="flex items-start gap-2"
+                    >
+                      <span class="text-amber-400 mt-0.5">•</span>
+                      <span>{{ detail }}</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Variable Log -->
+                <div v-if="parityInfo.variable_log.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Variable Resolution</h5>
+                  <div class="space-y-1">
+                    <div
+                      v-for="(variable, idx) in parityInfo.variable_log"
+                      :key="idx"
+                      class="flex items-center gap-2 text-content-muted"
+                    >
+                      <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="getSourceIcon(variable.source)" />
+                      </svg>
+                      <code class="text-kometa-gold">{{ variable.variable }}</code>
+                      <span class="text-content-muted">=</span>
+                      <span :class="variable.is_real ? 'text-emerald-400' : 'text-amber-400'">
+                        {{ variable.value }}
+                      </span>
+                      <span class="text-content-muted text-[10px]">({{ variable.source }})</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Group Decisions -->
+                <div v-if="parityInfo.group_decisions.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Group Selection</h5>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(decision, idx) in parityInfo.group_decisions"
+                      :key="idx"
+                      class="bg-surface-tertiary rounded p-2"
+                    >
+                      <div class="flex items-center gap-2">
+                        <Badge variant="success" size="sm">{{ decision.group_name }}</Badge>
+                        <span class="text-content-muted">Winner:</span>
+                        <span class="font-medium text-emerald-400">{{ decision.winner }}</span>
+                        <span class="text-content-muted">(weight {{ decision.winner_weight }})</span>
+                      </div>
+                      <div v-if="decision.losers.length > 0" class="mt-1 text-content-muted">
+                        Excluded: {{ decision.losers.map(l => `${l.name} (${l.weight})`).join(', ') }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Queue Assignments -->
+                <div v-if="parityInfo.queue_assignments.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Queue Positions</h5>
+                  <div class="space-y-1">
+                    <div
+                      v-for="(assignment, idx) in parityInfo.queue_assignments"
+                      :key="idx"
+                      class="flex items-center gap-2 text-content-muted"
+                    >
+                      <Badge variant="info" size="sm">{{ assignment.queue_name }}</Badge>
+                      <span>Position {{ assignment.position_index + 1 }}:</span>
+                      <span class="text-content">{{ assignment.overlay_name }}</span>
+                      <span class="text-[10px]">(weight {{ assignment.weight }})</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Suppressed Overlays -->
+                <div v-if="parityInfo.suppressed_overlays.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Suppressed Overlays</h5>
+                  <div class="space-y-1">
+                    <div
+                      v-for="(suppressed, idx) in parityInfo.suppressed_overlays"
+                      :key="idx"
+                      class="flex items-center gap-2 text-content-muted"
+                    >
+                      <span class="text-red-400">{{ suppressed.suppressed }}</span>
+                      <span>suppressed by</span>
+                      <span class="text-emerald-400">{{ suppressed.suppressor }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Warnings -->
+                <div v-if="previewResult?.warnings && previewResult.warnings.length > 0">
+                  <h5 class="font-medium text-content-secondary mb-1">Warnings</h5>
+                  <ul class="space-y-1 text-amber-400">
+                    <li
+                      v-for="(warning, idx) in previewResult.warnings"
+                      :key="idx"
+                      class="flex items-start gap-2"
+                    >
+                      <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span>{{ warning }}</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
         </Card>

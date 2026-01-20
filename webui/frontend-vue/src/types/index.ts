@@ -274,6 +274,59 @@ export interface MediaSearchParams {
 // Overlay Types
 // ===========================================
 
+export type ParityStatus = 'exact' | 'exact_for_selected' | 'risk' | 'not_supported';
+
+export interface VariableResolution {
+  variable: string;
+  source: string;
+  value: string;
+  is_real: boolean;
+  requires_api?: string;
+}
+
+export interface GroupDecision {
+  group_name: string;
+  winner: string;
+  winner_weight: number;
+  losers: Array<{ name: string; weight: number }>;
+  reason: string;
+}
+
+export interface QueueAssignment {
+  queue_name: string;
+  position_index: number;
+  overlay_name: string;
+  weight: number;
+  position_settings: Record<string, unknown>;
+}
+
+export interface PreviewParity {
+  status: ParityStatus;
+  details: string[];
+  variable_log: VariableResolution[];
+  group_decisions: GroupDecision[];
+  queue_assignments: QueueAssignment[];
+  suppressed_overlays: Array<{ suppressed: string; suppressor: string }>;
+}
+
+export interface RenderedOverlay {
+  name: string;
+  type: string;
+  position: [number, number] | null;
+  size: [number, number] | null;
+  rendered: boolean;
+}
+
+export interface OverlayPreviewResponse {
+  image: string;
+  canvas_size: [number, number];
+  overlays: RenderedOverlay[];
+  excluded_overlays: Array<{ name: string; reason: string }>;
+  warnings: string[];
+  parity: PreviewParity;
+  error?: string;
+}
+
 export interface OverlayPreview {
   overlay_name: string;
   preview_url: string;
