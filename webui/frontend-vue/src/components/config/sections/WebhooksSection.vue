@@ -4,14 +4,31 @@ import FormField from '../FormField.vue';
 import { Input, Checkbox, Select } from '@/components/common';
 import { useTestWebhook } from '@/api/media';
 
+type WebhookServiceType = 'discord' | 'slack' | 'teams' | 'custom';
+
 interface WebhookEntry {
   id: string;
   name: string;
   url: string;
+  service_type?: WebhookServiceType;
+  // Run events
   run_start?: boolean;
   run_end?: boolean;
+  // Collection events
   collection_changes?: boolean;
+  collection_created?: boolean;
+  collection_updated?: boolean;
+  collection_deleted?: boolean;
+  // Playlist events
+  playlist_changes?: boolean;
+  // Overlay events
+  overlay_changes?: boolean;
+  // Library events
+  library_changes?: boolean;
+  // Error events
   errors?: boolean;
+  // Version check
+  version_update?: boolean;
 }
 
 interface WebhooksConfig {
@@ -33,15 +50,31 @@ function getWebhooks(): WebhookEntry[] {
   return props.modelValue.webhooks || [];
 }
 
+// Service type options
+const serviceTypeOptions = [
+  { value: 'discord', label: 'Discord' },
+  { value: 'slack', label: 'Slack' },
+  { value: 'teams', label: 'Microsoft Teams' },
+  { value: 'custom', label: 'Custom / Other' },
+];
+
 function addWebhook() {
   const newWebhook: WebhookEntry = {
     id: crypto.randomUUID(),
     name: 'New Webhook',
     url: '',
+    service_type: 'discord',
     run_start: false,
     run_end: true,
     collection_changes: false,
+    collection_created: false,
+    collection_updated: false,
+    collection_deleted: false,
+    playlist_changes: false,
+    overlay_changes: false,
+    library_changes: false,
     errors: true,
+    version_update: false,
   };
   editingWebhook.value = newWebhook;
 }
@@ -92,7 +125,11 @@ async function testWebhook(webhook: WebhookEntry) {
   testResult.value = null;
 
   try {
-    const result = await testWebhookMutation.mutateAsync({ url: webhook.url });
+    const result = await testWebhookMutation.mutateAsync({
+      url: webhook.url,
+      service: webhook.service_type || 'custom',
+      event: 'test',
+    });
     testResult.value = {
       success: result.success,
       message: result.success ? (result.message || 'Test successful!') : (result.error || 'Test failed'),
@@ -177,9 +214,15 @@ function clearTestResult() {
       >
         <div class="flex items-start justify-between">
           <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <span class="font-medium">{{ webhook.name }}</span>
-              <div class="flex gap-1">
+              <span
+                v-if="webhook.service_type"
+                class="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400"
+              >
+                {{ serviceTypeOptions.find(s => s.value === webhook.service_type)?.label || webhook.service_type }}
+              </span>
+              <div class="flex gap-1 flex-wrap">
                 <span
                   v-if="webhook.run_start"
                   class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400"
@@ -191,6 +234,24 @@ function clearTestResult() {
                   class="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400"
                 >
                   End
+                </span>
+                <span
+                  v-if="webhook.collection_changes || webhook.collection_created || webhook.collection_updated || webhook.collection_deleted"
+                  class="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400"
+                >
+                  Collections
+                </span>
+                <span
+                  v-if="webhook.playlist_changes"
+                  class="text-xs px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400"
+                >
+                  Playlists
+                </span>
+                <span
+                  v-if="webhook.overlay_changes"
+                  class="text-xs px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400"
+                >
+                  Overlays
                 </span>
                 <span
                   v-if="webhook.errors"
@@ -299,28 +360,96 @@ function clearTestResult() {
           />
         </FormField>
 
+        <FormField
+          label="Service Type"
+          tooltip="Select the service type for proper message formatting"
+        >
+          <Select
+            v-model="editingWebhook.service_type"
+            :options="serviceTypeOptions"
+          />
+        </FormField>
+
         <div class="border-t border-border pt-4">
           <p class="text-sm font-medium mb-3">Notification Events</p>
-          <div class="space-y-2">
-            <Checkbox v-model="editingWebhook.run_start">
-              <span class="font-medium">Run Start</span>
-              <span class="text-content-secondary ml-2">Notify when Kometa starts running</span>
-            </Checkbox>
 
-            <Checkbox v-model="editingWebhook.run_end">
-              <span class="font-medium">Run End</span>
-              <span class="text-content-secondary ml-2">Notify when Kometa finishes running</span>
-            </Checkbox>
+          <!-- Run Events -->
+          <div class="mb-4">
+            <p class="text-xs text-content-muted uppercase tracking-wide mb-2">Run Events</p>
+            <div class="space-y-2 pl-2">
+              <Checkbox v-model="editingWebhook.run_start">
+                <span class="font-medium">Run Start</span>
+                <span class="text-content-secondary ml-2">Notify when Kometa starts running</span>
+              </Checkbox>
 
-            <Checkbox v-model="editingWebhook.collection_changes">
-              <span class="font-medium">Collection Changes</span>
-              <span class="text-content-secondary ml-2">Notify when collections are updated</span>
-            </Checkbox>
+              <Checkbox v-model="editingWebhook.run_end">
+                <span class="font-medium">Run End</span>
+                <span class="text-content-secondary ml-2">Notify when Kometa finishes running</span>
+              </Checkbox>
+            </div>
+          </div>
 
-            <Checkbox v-model="editingWebhook.errors">
-              <span class="font-medium">Errors</span>
-              <span class="text-content-secondary ml-2">Notify when errors occur</span>
-            </Checkbox>
+          <!-- Collection Events -->
+          <div class="mb-4">
+            <p class="text-xs text-content-muted uppercase tracking-wide mb-2">Collection Events</p>
+            <div class="space-y-2 pl-2">
+              <Checkbox v-model="editingWebhook.collection_changes">
+                <span class="font-medium">All Collection Changes</span>
+                <span class="text-content-secondary ml-2">Notify on any collection modification</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.collection_created">
+                <span class="font-medium">Collection Created</span>
+                <span class="text-content-secondary ml-2">Notify when new collections are created</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.collection_updated">
+                <span class="font-medium">Collection Updated</span>
+                <span class="text-content-secondary ml-2">Notify when collections are modified</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.collection_deleted">
+                <span class="font-medium">Collection Deleted</span>
+                <span class="text-content-secondary ml-2">Notify when collections are removed</span>
+              </Checkbox>
+            </div>
+          </div>
+
+          <!-- Media Events -->
+          <div class="mb-4">
+            <p class="text-xs text-content-muted uppercase tracking-wide mb-2">Media Events</p>
+            <div class="space-y-2 pl-2">
+              <Checkbox v-model="editingWebhook.playlist_changes">
+                <span class="font-medium">Playlist Changes</span>
+                <span class="text-content-secondary ml-2">Notify when playlists are updated</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.overlay_changes">
+                <span class="font-medium">Overlay Changes</span>
+                <span class="text-content-secondary ml-2">Notify when overlays are applied</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.library_changes">
+                <span class="font-medium">Library Changes</span>
+                <span class="text-content-secondary ml-2">Notify on library operations</span>
+              </Checkbox>
+            </div>
+          </div>
+
+          <!-- System Events -->
+          <div>
+            <p class="text-xs text-content-muted uppercase tracking-wide mb-2">System Events</p>
+            <div class="space-y-2 pl-2">
+              <Checkbox v-model="editingWebhook.errors">
+                <span class="font-medium">Errors</span>
+                <span class="text-content-secondary ml-2">Notify when errors occur</span>
+              </Checkbox>
+
+              <Checkbox v-model="editingWebhook.version_update">
+                <span class="font-medium">Version Updates</span>
+                <span class="text-content-secondary ml-2">Notify when new Kometa versions are available</span>
+              </Checkbox>
+            </div>
           </div>
         </div>
 
