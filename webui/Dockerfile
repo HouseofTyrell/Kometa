@@ -59,8 +59,7 @@ ENV PYTHONUNBUFFERED=1 \
     KOMETA_ROOT=/kometa \
     KOMETA_UI_PORT=8080 \
     KOMETA_UI_HOST=0.0.0.0 \
-    KOMETA_UI_APPLY_ENABLED=false \
-    KOMETA_UI_MODE=vue
+    KOMETA_UI_APPLY_ENABLED=false
 
 # Copy virtual environment from builder
 COPY --from=python-builder /opt/venv /opt/venv
@@ -78,9 +77,6 @@ COPY --chown=kometa:kometa backend/ /app/backend/
 
 # Copy built Vue frontend
 COPY --from=frontend-builder --chown=kometa:kometa /app/frontend/dist /app/frontend-vue/dist
-
-# Copy legacy frontend (for fallback if needed)
-COPY --chown=kometa:kometa legacy/ /app/legacy/
 
 # Switch to non-root user
 USER kometa
