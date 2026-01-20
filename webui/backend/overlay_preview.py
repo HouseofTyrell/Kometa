@@ -2,14 +2,18 @@
 Overlay Preview Manager for Kometa Web UI
 
 Parses overlay configurations and generates preview data for visualization.
+Enhanced with Kometa-parity variable substitution and parity tracking.
 """
 
 import os
 import re
 import base64
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Literal
 from io import BytesIO
+from dataclasses import dataclass, field, asdict
+from enum import Enum
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -22,10 +26,182 @@ from ruamel.yaml import YAML
 from .template_processor import TemplateProcessor
 
 
-# Standard canvas dimensions
+# Standard canvas dimensions (matching Kometa's overlay.py)
 CANVAS_PORTRAIT = (1000, 1500)   # Movies, shows, seasons
 CANVAS_LANDSCAPE = (1920, 1080)  # Episodes
 CANVAS_SQUARE = (1000, 1000)     # Albums
+
+
+class ParityStatus(str, Enum):
+    """Preview parity status levels."""
+    EXACT = "exact"                          # All values from authoritative sources
+    EXACT_FOR_SELECTED = "exact_for_selected"  # Exact for these items, others may differ
+    RISK = "risk"                            # Some values approximated
+    NOT_SUPPORTED = "not_supported"          # Cannot generate meaningful preview
+
+
+@dataclass
+class VariableResolution:
+    """Tracks how a variable was resolved."""
+    variable: str                # e.g., "<<imdb_rating>>"
+    source: str                  # e.g., "Plex Metadata", "Sample Value", "IMDb API"
+    value: str                   # Resolved value
+    is_real: bool                # True if from actual data source
+    requires_api: Optional[str] = None  # API name if external API required
+
+
+@dataclass
+class PreviewParity:
+    """Tracks overall preview parity status."""
+    status: ParityStatus = ParityStatus.EXACT
+    details: List[str] = field(default_factory=list)
+    variable_log: List[VariableResolution] = field(default_factory=list)
+
+    def downgrade(self, new_status: ParityStatus, reason: str):
+        """Downgrade parity status if new status is worse."""
+        status_order = [ParityStatus.EXACT, ParityStatus.EXACT_FOR_SELECTED,
+                       ParityStatus.RISK, ParityStatus.NOT_SUPPORTED]
+        if status_order.index(new_status) > status_order.index(self.status):
+            self.status = new_status
+        if reason not in self.details:
+            self.details.append(reason)
+
+    def log_variable(self, var: str, source: str, value: str, is_real: bool,
+                     requires_api: Optional[str] = None):
+        """Log a variable resolution."""
+        self.variable_log.append(VariableResolution(
+            variable=var, source=source, value=value,
+            is_real=is_real, requires_api=requires_api
+        ))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "status": self.status.value,
+            "details": self.details,
+            "variable_log": [asdict(v) for v in self.variable_log]
+        }
+
+
+# Kometa rating sources (from overlay.py)
+RATING_SOURCES = [
+    "anidb_average_rating", "anidb_rating", "anidb_score_rating",
+    "imdb_rating", "mal_rating",
+    "mdb_average_rating", "mdb_imdb_rating", "mdb_letterboxd_rating",
+    "mdb_metacritic_rating", "mdb_metacriticuser_rating", "mdb_myanimelist_rating",
+    "mdb_rating", "mdb_tmdb_rating", "mdb_tomatoes_rating",
+    "mdb_tomatoesaudience_rating", "mdb_trakt_rating",
+    "omdb_rating", "omdb_imdb_rating", "omdb_metascore_rating", "omdb_tomatoes_rating",
+    "plex_imdb_rating", "plex_tmdb_rating", "plex_tomatoes_rating",
+    "plex_tomatoesaudience_rating",
+    "tmdb_rating", "trakt_rating", "trakt_user_rating"
+]
+
+# Variable categories (from overlay.py)
+FLOAT_VARS = ["audience_rating", "critic_rating", "user_rating"] + RATING_SOURCES
+INT_VARS = ["runtime", "total_runtime", "season_number", "episode_number",
+            "episode_count", "versions"]
+DATE_VARS = ["originally_available"]
+TEXT_VARS = ["title", "content_rating", "original_title", "edition",
+             "show_title", "season_title"]
+
+# Variable modifiers (from overlay.py)
+VAR_MODS = {
+    "bitrate": ["", "H", "L"],
+    "originally_available": ["", "["],
+    "runtime": ["", "H", "M"],
+    "total_runtime": ["", "H", "M"],
+}
+# Add float var modifiers
+for mod in FLOAT_VARS:
+    VAR_MODS[mod] = ["", "%", "#", "/"]
+# Add text var modifiers
+for mod in TEXT_VARS:
+    VAR_MODS[mod] = ["", "U", "L", "P"]
+# Add int var modifiers
+for mod in ["season_number", "episode_number", "episode_count", "versions"]:
+    VAR_MODS[mod] = ["", "W", "WU", "WL", "0", "00"]
+
+# API requirements for external ratings
+RATING_API_REQUIREMENTS = {
+    "imdb_rating": "IMDb",
+    "tmdb_rating": "TMDb",
+    "trakt_rating": "Trakt",
+    "trakt_user_rating": "Trakt (authenticated)",
+    "mal_rating": "MyAnimeList",
+    "anidb_rating": "AniDB",
+    "anidb_average_rating": "AniDB",
+    "anidb_score_rating": "AniDB",
+    "mdb_rating": "MDBList",
+    "mdb_average_rating": "MDBList",
+    "mdb_imdb_rating": "MDBList",
+    "mdb_letterboxd_rating": "MDBList",
+    "mdb_metacritic_rating": "MDBList",
+    "mdb_metacriticuser_rating": "MDBList",
+    "mdb_myanimelist_rating": "MDBList",
+    "mdb_tmdb_rating": "MDBList",
+    "mdb_tomatoes_rating": "MDBList",
+    "mdb_tomatoesaudience_rating": "MDBList",
+    "mdb_trakt_rating": "MDBList",
+    "omdb_rating": "OMDb",
+    "omdb_imdb_rating": "OMDb",
+    "omdb_metascore_rating": "OMDb",
+    "omdb_tomatoes_rating": "OMDb",
+    "plex_imdb_rating": "Plex",
+    "plex_tmdb_rating": "Plex",
+    "plex_tomatoes_rating": "Plex",
+    "plex_tomatoesaudience_rating": "Plex",
+}
+
+# Sample values for variables when real data unavailable
+SAMPLE_VALUES = {
+    # Ratings (scale 0-10 typically)
+    "audience_rating": "8.5",
+    "critic_rating": "92",
+    "user_rating": "9.0",
+    "imdb_rating": "8.2",
+    "tmdb_rating": "8.1",
+    "trakt_rating": "8.3",
+    "trakt_user_rating": "9.0",
+    "mal_rating": "8.7",
+    "anidb_rating": "8.4",
+    "anidb_average_rating": "8.2",
+    "anidb_score_rating": "8.5",
+    "mdb_rating": "8.0",
+    "mdb_average_rating": "7.9",
+    "mdb_imdb_rating": "8.2",
+    "mdb_letterboxd_rating": "4.1",
+    "mdb_metacritic_rating": "78",
+    "mdb_metacriticuser_rating": "8.1",
+    "mdb_myanimelist_rating": "8.5",
+    "mdb_tmdb_rating": "8.1",
+    "mdb_tomatoes_rating": "92",
+    "mdb_tomatoesaudience_rating": "85",
+    "mdb_trakt_rating": "8.3",
+    "omdb_rating": "8.2",
+    "omdb_imdb_rating": "8.2",
+    "omdb_metascore_rating": "78",
+    "omdb_tomatoes_rating": "92",
+    "plex_imdb_rating": "8.2",
+    "plex_tmdb_rating": "8.1",
+    "plex_tomatoes_rating": "92",
+    "plex_tomatoesaudience_rating": "85",
+    # Other values
+    "runtime": "7200000",  # 2 hours in ms
+    "total_runtime": "36000000",  # 10 hours
+    "title": "Sample Title",
+    "original_title": "Original Title",
+    "content_rating": "PG-13",
+    "edition": "Director's Cut",
+    "show_title": "Sample Show",
+    "season_title": "Season 1",
+    "season_number": "1",
+    "episode_number": "5",
+    "episode_count": "10",
+    "versions": "2",
+    "bitrate": "15000",
+    "originally_available": "2024-01-15",
+}
 
 # Default overlay properties
 DEFAULTS = {
@@ -516,7 +692,7 @@ class OverlayPreviewManager:
         media_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Generate a preview of overlays on a canvas.
+        Generate a preview of overlays on a canvas with parity tracking.
 
         Args:
             overlays: List of overlay configurations to render
@@ -527,14 +703,22 @@ class OverlayPreviewManager:
         Returns preview data including:
         - Base64 encoded preview image
         - Overlay positions and dimensions
+        - Parity status and variable resolution log
         - Warnings/errors
         """
+        # Initialize parity tracking
+        parity = PreviewParity()
+
         # Store media metadata for text substitution
         self._current_media_metadata = media_metadata or {}
+        self._current_parity = parity
+
         if not HAS_PIL:
+            parity.downgrade(ParityStatus.NOT_SUPPORTED, "PIL/Pillow not available")
             return {
                 "error": "PIL/Pillow not available for image generation",
-                "overlays": overlays
+                "overlays": overlays,
+                "parity": parity.to_dict()
             }
 
         # Select canvas size
@@ -545,36 +729,54 @@ class OverlayPreviewManager:
         else:
             canvas_size = CANVAS_PORTRAIT
 
+        # Determine preview source for parity tracking
+        has_real_poster = False
+        has_real_metadata = bool(media_metadata and media_metadata.get('title'))
+
         # Create canvas
         if sample_poster:
             try:
                 canvas = Image.open(sample_poster).convert("RGBA")
                 canvas = canvas.resize(canvas_size, Image.Resampling.LANCZOS)
+                has_real_poster = True
             except Exception:
                 canvas = self._create_sample_canvas(canvas_size)
+                parity.downgrade(ParityStatus.RISK, "Failed to load poster, using sample canvas")
         else:
             canvas = self._create_sample_canvas(canvas_size)
+            if not has_real_metadata:
+                parity.downgrade(ParityStatus.RISK, "Using sample canvas (no poster source)")
 
         preview_overlays = []
         warnings = []
 
         for overlay in overlays:
             try:
-                result = self._render_overlay(canvas, overlay)
+                result = self._render_overlay(canvas, overlay, parity)
                 preview_overlays.append(result)
             except Exception as e:
                 warnings.append(f"Failed to render {overlay.get('name', 'unknown')}: {str(e)}")
+                parity.downgrade(ParityStatus.RISK, f"Overlay render error: {str(e)}")
 
         # Convert to base64
         buffer = BytesIO()
         canvas.save(buffer, format="PNG")
         base64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
+        # If we have real poster and metadata but no text overlays used external APIs,
+        # ensure status reflects this
+        if has_real_poster and has_real_metadata and parity.status == ParityStatus.EXACT:
+            parity.downgrade(
+                ParityStatus.EXACT_FOR_SELECTED,
+                "Preview accurate for this specific item"
+            )
+
         return {
             "image": f"data:image/png;base64,{base64_image}",
             "canvas_size": canvas_size,
             "overlays": preview_overlays,
-            "warnings": warnings
+            "warnings": warnings,
+            "parity": parity.to_dict()
         }
 
     def _create_sample_canvas(self, size: Tuple[int, int]) -> Image.Image:
@@ -604,10 +806,18 @@ class OverlayPreviewManager:
 
         return canvas
 
-    def _render_overlay(self, canvas: Image.Image, overlay: Dict) -> Dict[str, Any]:
-        """Render a single overlay on the canvas."""
+    def _render_overlay(
+        self,
+        canvas: Image.Image,
+        overlay: Dict,
+        parity: Optional[PreviewParity] = None
+    ) -> Dict[str, Any]:
+        """Render a single overlay on the canvas with parity tracking."""
         canvas_size = canvas.size
         draw = ImageDraw.Draw(canvas)
+
+        if parity is None:
+            parity = PreviewParity()
 
         overlay_type = overlay.get("type", "image")
         result = {
@@ -619,7 +829,7 @@ class OverlayPreviewManager:
         }
 
         if overlay_type == "text":
-            self._render_text_overlay(canvas, draw, overlay, result)
+            self._render_text_overlay(canvas, draw, overlay, result, parity)
         elif overlay_type == "image":
             self._render_image_overlay(canvas, overlay, result)
         elif overlay_type == "backdrop":
@@ -634,13 +844,17 @@ class OverlayPreviewManager:
         canvas: Image.Image,
         draw: ImageDraw.Draw,
         overlay: Dict,
-        result: Dict
+        result: Dict,
+        parity: Optional[PreviewParity] = None
     ):
-        """Render a text overlay."""
+        """Render a text overlay with parity-tracked variable substitution."""
+        if parity is None:
+            parity = PreviewParity()
+
         text = overlay.get("text_content", "Sample Text")
 
-        # Substitute sample values for variables
-        text = self._substitute_variables(text)
+        # Substitute variables with parity tracking
+        text = self._substitute_variables(text, parity)
 
         # Load font
         font_size = overlay.get("font_size", 36)
@@ -823,65 +1037,232 @@ class OverlayPreviewManager:
 
         result["rendered"] = True
 
-    def _substitute_variables(self, text: str) -> str:
+    def _substitute_variables(self, text: str, parity: Optional[PreviewParity] = None) -> str:
         """
         Substitute variables in text with actual metadata values when available,
-        or sample values as fallback.
+        or sample values as fallback. Tracks parity status for each resolution.
+
+        This method implements Kometa-compatible variable substitution with full
+        modifier support (%, #, /, H, M, U, L, P, W, 0, 00, etc.)
         """
+        if parity is None:
+            parity = PreviewParity()
+
         # Get metadata from current preview context
-        metadata = getattr(self, '_current_media_metadata', {})
+        metadata = getattr(self, '_current_media_metadata', {}) or {}
+        has_real_metadata = bool(metadata.get('title'))
 
-        # Map Kometa variables to Plex metadata fields
-        metadata_mapping = {
-            "<<runtime>>": ("duration", lambda x: str(x) if x else "7200000"),
-            "<<runtime H>>": ("duration", lambda x: str(int(x / 3600000)) if x else "2"),
-            "<<runtime M>>": ("duration", lambda x: str(int((x % 3600000) / 60000)).zfill(2) if x else "00"),
-            "<<audience_rating>>": ("audienceRating", lambda x: f"{x:.1f}" if x else "8.5"),
-            "<<critic_rating>>": ("rating", lambda x: str(int(x * 10)) if x else "92"),
-            "<<user_rating>>": ("userRating", lambda x: f"{x:.1f}" if x else "9.0"),
-            "<<imdb_rating>>": ("audienceRating", lambda x: f"{x:.1f}" if x else "8.2"),
-            "<<tmdb_rating>>": ("audienceRating", lambda x: f"{x:.1f}" if x else "8.1"),
-            "<<title>>": ("title", lambda x: x if x else "Sample Title"),
-            "<<content_rating>>": ("contentRating", lambda x: x if x else "PG-13"),
-            "<<edition>>": ("editionTitle", lambda x: x if x else "Director's Cut"),
-            "<<year>>": ("year", lambda x: str(x) if x else "2024"),
-            "<<originally_available>>": ("originallyAvailableAt", lambda x: x if x else "2024-01-15"),
-            "<<studio>>": ("studio", lambda x: x if x else "Studio"),
-            "<<genres>>": ("genres", lambda x: ", ".join(x[:3]) if x else "Drama, Action"),
+        # Plex metadata field mappings
+        plex_field_map = {
+            "title": "title",
+            "original_title": "originalTitle",
+            "content_rating": "contentRating",
+            "edition": "editionTitle",
+            "show_title": "grandparentTitle",
+            "season_title": "parentTitle",
+            "runtime": "duration",
+            "total_runtime": "duration",  # For shows, would need calculation
+            "audience_rating": "audienceRating",
+            "critic_rating": "rating",
+            "user_rating": "userRating",
+            "season_number": "parentIndex",
+            "episode_number": "index",
+            "episode_count": None,  # Requires additional API call
+            "versions": None,  # Requires media info
+            "bitrate": "bitrate",
+            "originally_available": "originallyAvailableAt",
         }
 
-        # Season/episode specific
-        season_episode_mapping = {
-            "<<season_number>>": ("parentIndex", lambda x: str(x) if x else "1"),
-            "<<season_number0>>": ("parentIndex", lambda x: str(x).zfill(2) if x else "01"),
-            "<<episode_number>>": ("index", lambda x: str(x) if x else "5"),
-            "<<episode_number0>>": ("index", lambda x: str(x).zfill(2) if x else "05"),
-            "<<episode_number00>>": ("index", lambda x: str(x).zfill(3) if x else "005"),
-        }
+        def apply_modifier(base_var: str, value: str, modifier: str) -> str:
+            """Apply Kometa variable modifier to a value."""
+            if not value:
+                return "???"
 
-        # Static sample values for less common variables
-        static_substitutions = {
-            "<<bitrate>>": "15000",
-            "<<versions>>": "2",
-            "<<video_resolution>>": "4K",
-            "<<audio_codec>>": "TrueHD Atmos",
-            "<<video_codec>>": "HEVC",
-        }
+            try:
+                # Float/rating modifiers
+                if modifier == "%":
+                    # Multiply by 10 for percentage display
+                    return str(int(float(value) * 10))
+                elif modifier == "#":
+                    # Round to integer
+                    return str(int(float(value)))
+                elif modifier == "/":
+                    # Divide by 2 (for 5-star scale from 10-point)
+                    return f"{float(value) / 2:.1f}"
 
-        # Apply metadata-based substitutions
-        for var, (field, formatter) in {**metadata_mapping, **season_episode_mapping}.items():
-            if var in text:
-                value = metadata.get(field)
-                text = text.replace(var, formatter(value))
+                # Runtime modifiers
+                elif modifier == "H":
+                    if base_var in ["runtime", "total_runtime"]:
+                        # Convert ms to hours
+                        return str(int(int(value) / 3600000))
+                    elif base_var == "bitrate":
+                        # Highest bitrate (already have single value)
+                        return value
+                    return value
+                elif modifier == "M":
+                    if base_var in ["runtime", "total_runtime"]:
+                        # Convert ms to minutes (remainder)
+                        return str(int((int(value) % 3600000) / 60000)).zfill(2)
+                    return value
+                elif modifier == "L" and base_var == "bitrate":
+                    # Lowest bitrate
+                    return value
 
-        # Apply static substitutions
-        for var, value in static_substitutions.items():
-            text = text.replace(var, value)
+                # Text modifiers
+                elif modifier == "U":
+                    return value.upper()
+                elif modifier == "L":
+                    return value.lower()
+                elif modifier == "P":
+                    return value.title()
 
-        # Handle any remaining variables with placeholder
-        text = re.sub(r"<<[^>]+>>", "???", text)
+                # Number modifiers
+                elif modifier == "W":
+                    # Number as word (basic implementation)
+                    words = ["zero", "one", "two", "three", "four", "five",
+                            "six", "seven", "eight", "nine", "ten"]
+                    num = int(value)
+                    return words[num] if 0 <= num <= 10 else str(num)
+                elif modifier == "WU":
+                    words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE",
+                            "SIX", "SEVEN", "EIGHT", "NINE", "TEN"]
+                    num = int(value)
+                    return words[num] if 0 <= num <= 10 else str(num)
+                elif modifier == "WL":
+                    words = ["zero", "one", "two", "three", "four", "five",
+                            "six", "seven", "eight", "nine", "ten"]
+                    num = int(value)
+                    return words[num] if 0 <= num <= 10 else str(num)
+                elif modifier == "0":
+                    return str(int(value)).zfill(2)
+                elif modifier == "00":
+                    return str(int(value)).zfill(3)
 
-        return text
+                # Date modifiers
+                elif modifier.startswith("["):
+                    # Date format string
+                    try:
+                        date_format = modifier[1:-1] if modifier.endswith("]") else modifier[1:]
+                        dt = datetime.strptime(value, "%Y-%m-%d")
+                        return dt.strftime(date_format)
+                    except (ValueError, AttributeError):
+                        return value
+
+            except (ValueError, TypeError, IndexError):
+                pass
+
+            return value
+
+        def resolve_variable(var_match: str) -> str:
+            """Resolve a single variable with its modifier."""
+            # Extract variable name and modifier
+            # Format: <<var_name>> or <<var_nameM>> where M is modifier
+            inner = var_match[2:-2]  # Remove << and >>
+
+            # Check for date format modifier
+            if "originally_available[" in inner:
+                match = re.search(r"originally_available\[(.+)\]", inner)
+                if match:
+                    base_var = "originally_available"
+                    modifier = "[" + match.group(1) + "]"
+                else:
+                    base_var = inner
+                    modifier = ""
+            else:
+                # Find base variable and modifier
+                base_var = inner
+                modifier = ""
+
+                # Check for known modifiers at end
+                for mod_len in [2, 1]:  # Check double mods first
+                    if len(inner) > mod_len:
+                        potential_mod = inner[-mod_len:]
+                        potential_base = inner[:-mod_len]
+                        if potential_base in VAR_MODS and potential_mod in VAR_MODS.get(potential_base, []):
+                            base_var = potential_base
+                            modifier = potential_mod
+                            break
+
+            # Try to get value from Plex metadata
+            plex_field = plex_field_map.get(base_var)
+            value = None
+            source = "Sample Value"
+            is_real = False
+            requires_api = None
+
+            if plex_field and plex_field in metadata:
+                raw_value = metadata.get(plex_field)
+                if raw_value is not None:
+                    value = str(raw_value) if not isinstance(raw_value, str) else raw_value
+                    source = "Plex Metadata"
+                    is_real = True
+
+            # Check if this is an external rating that requires API
+            if base_var in RATING_API_REQUIREMENTS:
+                requires_api = RATING_API_REQUIREMENTS[base_var]
+                # For now, we don't have external API integration
+                # Use sample value and mark as RISK
+                if value is None:
+                    value = SAMPLE_VALUES.get(base_var)
+                    source = f"Sample Value ({requires_api} not configured)"
+                    is_real = False
+                    parity.downgrade(
+                        ParityStatus.RISK,
+                        f"<<{base_var}>> requires {requires_api} API (using sample value)"
+                    )
+
+            # Fall back to sample value if no real data
+            if value is None:
+                value = SAMPLE_VALUES.get(base_var)
+                if value:
+                    source = "Sample Value"
+                    is_real = False
+                    if has_real_metadata:
+                        # We have some metadata but not this field
+                        parity.downgrade(
+                            ParityStatus.EXACT_FOR_SELECTED,
+                            f"<<{base_var}>> not available in Plex metadata"
+                        )
+                else:
+                    value = "???"
+                    source = "Unknown Variable"
+                    is_real = False
+                    parity.downgrade(
+                        ParityStatus.RISK,
+                        f"<<{inner}>> is not a recognized Kometa variable"
+                    )
+
+            # Apply modifier
+            final_value = apply_modifier(base_var, value, modifier)
+
+            # Log the resolution
+            parity.log_variable(
+                variable=var_match,
+                source=source,
+                value=final_value,
+                is_real=is_real,
+                requires_api=requires_api
+            )
+
+            return final_value
+
+        # Find all variables and resolve them
+        result = text
+        var_pattern = re.compile(r"<<[^>]+>>")
+
+        for match in var_pattern.finditer(text):
+            var_str = match.group(0)
+            resolved = resolve_variable(var_str)
+            result = result.replace(var_str, resolved, 1)
+
+        # If we used real metadata, upgrade status if it's still EXACT
+        if has_real_metadata and parity.status == ParityStatus.EXACT:
+            parity.downgrade(
+                ParityStatus.EXACT_FOR_SELECTED,
+                "Preview uses real metadata from selected item"
+            )
+
+        return result
 
     def _parse_color(self, color: str) -> Tuple[int, int, int, int]:
         """Parse a hex color string to RGBA tuple."""
